@@ -50,6 +50,7 @@ import { BotService } from './services/bot.service';
 import { CacheService } from './services/cache.service';
 import { CalendarEventsService } from './services/calendar-events.service';
 import { CrmService } from './services/crm.service';
+import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
 import { LeadsService } from './services/leads.service';
 import { WAMonitoringService } from './services/monitor.service';
@@ -102,7 +103,7 @@ const settingsService = new SettingsService(waMonitor);
 export const settingsController = new SettingsController(settingsService);
 
 const crmService = new CrmService(prismaRepository);
-export const crmController = new CrmController(crmService);
+export const crmController = new CrmController(crmService, new CrmSuggestReplyService(prismaRepository));
 
 const leadsService = new LeadsService(prismaRepository);
 export const leadsController = new LeadsController(leadsService);

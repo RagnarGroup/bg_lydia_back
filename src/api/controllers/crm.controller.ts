@@ -1,8 +1,12 @@
 import { CrmService } from '@api/services/crm.service';
+import { CrmSuggestReplyService } from '@api/services/crm-suggest-reply.service';
 import { AgentRole, ChatStatus } from '@prisma/client';
 
 export class CrmController {
-  constructor(private readonly crmService: CrmService) {}
+  constructor(
+    private readonly crmService: CrmService,
+    private readonly suggestReplyService: CrmSuggestReplyService,
+  ) {}
 
   public async listAgents() {
     return this.crmService.listAgents();
@@ -18,6 +22,11 @@ export class CrmController {
 
   public async searchMessages(query: { q?: string; instanceName?: string; limit?: string }) {
     return this.crmService.searchMessages(query);
+  }
+
+  // LYD-68: sugerencia de respuesta con IA (no envia nada, solo devuelve texto).
+  public async suggestReply(chatId: string) {
+    return this.suggestReplyService.suggestReply(chatId);
   }
 
   public async getConversation(chatId: string) {

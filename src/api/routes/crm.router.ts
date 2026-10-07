@@ -57,6 +57,10 @@ export class CrmRouter {
         await crmController.deleteConversation(req.params.chatId);
         return res.status(204).send();
       })
+      // LYD-68: pide a la IA una respuesta sugerida; no envia nada al cliente.
+      .post('/conversations/:chatId/suggest-reply', async (req, res) => {
+        return res.json(await crmController.suggestReply(req.params.chatId));
+      })
       .get('/conversations/:chatId/notes', async (req, res) => {
         return res.json(await crmController.listNotes(req.params.chatId));
       })
