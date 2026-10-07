@@ -1,60 +1,20 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { BadRequestException, InternalServerErrorException, NotFoundException } from '@exceptions';
-import { Prisma } from '@prisma/client';
 
 import { AgentKnowledgeService } from './agent-knowledge.service';
 
 const RECENT_MESSAGES = 20;
-const EXAMPLE_REPLIES = 5;
 const MAX_MESSAGE_CHARS = 600;
 const REQUEST_TIMEOUT_MS = 130_000;
 
-// Palabras que no aportan para buscar respuestas parecidas de asesoras.
-const STOPWORDS = new Set([
-  'hola',
-  'buenas',
-  'buenos',
-  'dias',
-  'tardes',
-  'noches',
-  'como',
-  'estas',
-  'para',
-  'pero',
-  'porque',
-  'que',
-  'quiero',
-  'quisiera',
-  'necesito',
-  'puedo',
-  'puede',
-  'favor',
-  'gracias',
-  'saber',
-  'tengo',
-  'tiene',
-  'tienen',
-  'este',
-  'esta',
-  'estoy',
-  'muy',
-  'con',
-  'una',
-  'uno',
-  'los',
-  'las',
-  'del',
-  'por',
-  'mas',
-]);
-
 type ChatLine = { fromMe: boolean; text: string };
 
-// LYD-68: sugerencia de respuesta con IA. Arma un contexto (conversacion
-// reciente + plantillas rapidas + respuestas previas de asesoras a mensajes
-// parecidos + base de conocimiento fija) y se lo pide a codex headless via el
-// puente HTTP del host (deploy/lydia-prod/codex-bridge). Nunca envia nada:
-// solo devuelve el texto para que el front lo copie al textarea.
+// LYD-68/LYD-69/LYD-70: sugerencia de respuesta con IA. Arma un contexto
+// (instrucciones del agente + conocimiento activo + plantillas rapidas + la
+// conversacion del chat abierto) y se lo pide a codex headless via el puente
+// HTTP del host (deploy/lydia-prod/codex-bridge). No incluye mensajes de otros
+// chats. Nunca envia nada: solo devuelve el texto para que el front lo copie
+// al textarea.
 export class CrmSuggestReplyService {
   constructor(
     private readonly prisma: PrismaRepository,
@@ -74,7 +34,7 @@ export class CrmSuggestReplyService {
     }
 
     const contactName = chat.contactNameOverride ?? chat.name ?? 'el cliente';
-    const context = await this.loadContext(lastIncoming.text, { instanceId: chat.instanceId, chatId: chat.id });
+    const context = await this.loadContext();
     const prompt = this.buildPrompt({ contactName, conversation, ...context });
 
     return { suggestion: await this.askCodex(prompt) };
@@ -87,7 +47,7 @@ export class CrmSuggestReplyService {
     if (!text) {
       throw new BadRequestException('message is required');
     }
-    const context = await this.loadContext(text, {});
+    const context = await this.loadContext();
     const prompt = this.buildPrompt({
       contactName: 'el cliente',
       conversation: [{ fromMe: false, text }],
@@ -96,10 +56,9 @@ export class CrmSuggestReplyService {
     return { suggestion: await this.askCodex(prompt) };
   }
 
-  private async loadContext(incomingText: string, scope: { instanceId?: string; chatId?: string }) {
-    const [templates, examples, knowledge, config] = await Promise.all([
+  private async loadContext() {
+    const [templates, knowledge, config] = await Promise.all([
       this.prisma.quickReplyTemplate.findMany({ orderBy: { command: 'asc' } }),
-      this.similarAgentReplies(incomingText, scope),
       this.knowledge.listActiveKnowledge(),
       this.knowledge.getInstructions(),
     ]);
@@ -107,7 +66,6 @@ export class CrmSuggestReplyService {
       instructions: config.instructions,
       knowledge: knowledge.map((k) => `### ${k.title} (${k.category})\n${k.content}`),
       templates: templates.map((t) => `${t.command} (${t.label}):\n${t.body}`),
-      examples,
     };
   }
 
@@ -144,49 +102,12 @@ export class CrmSuggestReplyService {
     return '';
   }
 
-  // Respuestas reales de asesoras en OTRAS conversaciones que mencionan las
-  // mismas palabras clave que el ultimo mensaje del cliente. Es la parte
-  // "retrieval" del RAG de prueba: busqueda por palabras, sin embeddings.
-  private async similarAgentReplies(
-    incomingText: string,
-    scope: { instanceId?: string; chatId?: string },
-  ): Promise<string[]> {
-    const keywords = [
-      ...new Set(
-        incomingText
-          .toLowerCase()
-          .split(/[^\p{L}\p{N}]+/u)
-          .filter((w) => w.length >= 4 && !STOPWORDS.has(w)),
-      ),
-    ].slice(0, 5);
-    if (!keywords.length) return [];
-
-    const patterns = keywords.map((k) => Prisma.sql`lower(t.value) LIKE ${`%${k}%`}`);
-    const rows = await this.prisma.$queryRaw<{ text: string }[]>(Prisma.sql`
-      SELECT t.value AS text
-      FROM "Message" m
-      JOIN "Chat" c ON c."instanceId" = m."instanceId" AND c."remoteJid" = m."key"->>'remoteJid'
-      CROSS JOIN LATERAL (
-        SELECT COALESCE(m."message"->>'conversation', m."message"->'extendedTextMessage'->>'text', '') AS value
-      ) AS t
-      WHERE ${scope.instanceId ? Prisma.sql`m."instanceId" = ${scope.instanceId}` : Prisma.sql`TRUE`}
-        AND ${scope.chatId ? Prisma.sql`c.id <> ${scope.chatId}` : Prisma.sql`TRUE`}
-        AND m."key"->>'fromMe' = 'true'
-        AND length(t.value) BETWEEN 40 AND ${MAX_MESSAGE_CHARS}
-        AND (${Prisma.join(patterns, ' OR ')})
-      ORDER BY m."messageTimestamp" DESC
-      LIMIT ${EXAMPLE_REPLIES}
-    `);
-    return rows.map((r) => r.text);
-  }
-
   private buildPrompt(input: {
     contactName: string;
     conversation: ChatLine[];
     instructions: string;
     knowledge: string[];
     templates: string[];
-    examples: string[];
   }): string {
     const transcript = input.conversation
       .map((line) => `${line.fromMe ? 'Asesora' : 'Cliente'}: ${line.text}`)
@@ -199,10 +120,6 @@ export class CrmSuggestReplyService {
         : '',
       '## Mensajes predeterminados de la empresa (informacion oficial y tono)',
       input.templates.join('\n\n---\n\n'),
-      input.examples.length
-        ? '## Respuestas reales de asesoras a consultas parecidas (solo como referencia de estilo)\n' +
-          input.examples.map((e, i) => `Ejemplo ${i + 1}: ${e}`).join('\n\n')
-        : '',
       `## Conversacion actual con ${input.contactName}`,
       transcript,
       '## Tarea',
