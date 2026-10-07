@@ -1,8 +1,8 @@
 import { PrismaRepository } from '@api/repository/repository.service';
-import { InternalServerErrorException, NotFoundException } from '@exceptions';
+import { BadRequestException, InternalServerErrorException, NotFoundException } from '@exceptions';
 import { Prisma } from '@prisma/client';
 
-import { LYDIA_KNOWLEDGE_BASE } from './crm-knowledge';
+import { AgentKnowledgeService } from './agent-knowledge.service';
 
 const RECENT_MESSAGES = 20;
 const EXAMPLE_REPLIES = 5;
@@ -56,7 +56,10 @@ type ChatLine = { fromMe: boolean; text: string };
 // puente HTTP del host (deploy/lydia-prod/codex-bridge). Nunca envia nada:
 // solo devuelve el texto para que el front lo copie al textarea.
 export class CrmSuggestReplyService {
-  constructor(private readonly prisma: PrismaRepository) {}
+  constructor(
+    private readonly prisma: PrismaRepository,
+    private readonly knowledge: AgentKnowledgeService,
+  ) {}
 
   public async suggestReply(chatId: string) {
     const chat = await this.prisma.chat.findUnique({ where: { id: chatId } });
@@ -70,20 +73,42 @@ export class CrmSuggestReplyService {
       throw new InternalServerErrorException('La conversacion no tiene mensajes del cliente para responder');
     }
 
-    const [templates, examples] = await Promise.all([
-      this.prisma.quickReplyTemplate.findMany({ orderBy: { command: 'asc' } }),
-      this.similarAgentReplies(chat.instanceId, chat.id, lastIncoming.text),
-    ]);
-
     const contactName = chat.contactNameOverride ?? chat.name ?? 'el cliente';
-    const prompt = this.buildPrompt({
-      contactName,
-      conversation,
-      templates: templates.map((t) => `${t.command} (${t.label}):\n${t.body}`),
-      examples,
-    });
+    const context = await this.loadContext(lastIncoming.text, { instanceId: chat.instanceId, chatId: chat.id });
+    const prompt = this.buildPrompt({ contactName, conversation, ...context });
 
     return { suggestion: await this.askCodex(prompt) };
+  }
+
+  // LYD-69: prueba desde la pantalla "Agente" -- una sugerencia para un mensaje
+  // de cliente escrito a mano, con el mismo conocimiento que usaria un chat real.
+  public async suggestForMessage(message: unknown) {
+    const text = typeof message === 'string' ? message.trim().slice(0, MAX_MESSAGE_CHARS) : '';
+    if (!text) {
+      throw new BadRequestException('message is required');
+    }
+    const context = await this.loadContext(text, {});
+    const prompt = this.buildPrompt({
+      contactName: 'el cliente',
+      conversation: [{ fromMe: false, text }],
+      ...context,
+    });
+    return { suggestion: await this.askCodex(prompt) };
+  }
+
+  private async loadContext(incomingText: string, scope: { instanceId?: string; chatId?: string }) {
+    const [templates, examples, knowledge, config] = await Promise.all([
+      this.prisma.quickReplyTemplate.findMany({ orderBy: { command: 'asc' } }),
+      this.similarAgentReplies(incomingText, scope),
+      this.knowledge.listActiveKnowledge(),
+      this.knowledge.getInstructions(),
+    ]);
+    return {
+      instructions: config.instructions,
+      knowledge: knowledge.map((k) => `### ${k.title} (${k.category})\n${k.content}`),
+      templates: templates.map((t) => `${t.command} (${t.label}):\n${t.body}`),
+      examples,
+    };
   }
 
   private async recentConversation(instanceId: string, remoteJid: string): Promise<ChatLine[]> {
@@ -122,7 +147,10 @@ export class CrmSuggestReplyService {
   // Respuestas reales de asesoras en OTRAS conversaciones que mencionan las
   // mismas palabras clave que el ultimo mensaje del cliente. Es la parte
   // "retrieval" del RAG de prueba: busqueda por palabras, sin embeddings.
-  private async similarAgentReplies(instanceId: string, chatId: string, incomingText: string): Promise<string[]> {
+  private async similarAgentReplies(
+    incomingText: string,
+    scope: { instanceId?: string; chatId?: string },
+  ): Promise<string[]> {
     const keywords = [
       ...new Set(
         incomingText
@@ -141,8 +169,8 @@ export class CrmSuggestReplyService {
       CROSS JOIN LATERAL (
         SELECT COALESCE(m."message"->>'conversation', m."message"->'extendedTextMessage'->>'text', '') AS value
       ) AS t
-      WHERE m."instanceId" = ${instanceId}
-        AND c.id <> ${chatId}
+      WHERE ${scope.instanceId ? Prisma.sql`m."instanceId" = ${scope.instanceId}` : Prisma.sql`TRUE`}
+        AND ${scope.chatId ? Prisma.sql`c.id <> ${scope.chatId}` : Prisma.sql`TRUE`}
         AND m."key"->>'fromMe' = 'true'
         AND length(t.value) BETWEEN 40 AND ${MAX_MESSAGE_CHARS}
         AND (${Prisma.join(patterns, ' OR ')})
@@ -155,6 +183,8 @@ export class CrmSuggestReplyService {
   private buildPrompt(input: {
     contactName: string;
     conversation: ChatLine[];
+    instructions: string;
+    knowledge: string[];
     templates: string[];
     examples: string[];
   }): string {
@@ -163,7 +193,10 @@ export class CrmSuggestReplyService {
       .join('\n');
 
     return [
-      LYDIA_KNOWLEDGE_BASE,
+      input.instructions,
+      input.knowledge.length
+        ? '## Informacion vigente de la empresa (usala como fuente principal)\n' + input.knowledge.join('\n\n')
+        : '',
       '## Mensajes predeterminados de la empresa (informacion oficial y tono)',
       input.templates.join('\n\n---\n\n'),
       input.examples.length

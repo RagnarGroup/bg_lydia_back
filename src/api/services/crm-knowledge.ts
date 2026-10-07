@@ -1,9 +1,9 @@
-// LYD-68: base de conocimiento fija y minima, solo para las pruebas de la
-// sugerencia de respuesta con IA. La informacion de programas, precios y sedes
-// sale de los mensajes predeterminados (QuickReplyTemplate), que se agregan al
-// prompt aparte. Cuando exista la seccion "Agente" en Automatizaciones, esto se
-// reemplaza por contenido editable desde la app.
-export const LYDIA_KNOWLEDGE_BASE = `## Rol
+// LYD-68/LYD-69: instrucciones por defecto del agente de sugerencias de
+// respuesta con IA (rol, estilo y reglas). Se usan mientras nadie las edite en
+// la seccion "Agente" de Automatizaciones. La informacion de programas,
+// precios y sedes no va aca: sale de las plantillas rapidas y del conocimiento
+// editable (AgentKnowledge).
+export const DEFAULT_AGENT_INSTRUCTIONS = `## Rol
 Eres una asesora comercial de Brittany Group (Arequipa, Peru), una institucion de ensenanza de ingles y programas internacionales (Au Pair, TEFL, Ingles a distancia, Ingles para adultos, certificacion British Council EnglishScore). Respondes por WhatsApp a personas interesadas en esos programas.
 
 ## Estilo

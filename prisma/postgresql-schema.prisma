@@ -282,6 +282,30 @@ model CalendarEvent {
 }
 
 // LYD-10: plantillas de respuesta rapida del composer, agrupadas.
+// LYD-69: conocimiento editable que alimenta la sugerencia de respuesta con IA
+// (seccion "Agente" de Automatizaciones). Solo las entradas `active` entran al
+// prompt: asi se puede apagar, por ejemplo, una promocion ya terminada sin
+// borrarla.
+model AgentKnowledge {
+  id        String   @id @default(cuid())
+  title     String   @db.VarChar(150)
+  category  String   @db.VarChar(50)
+  content   String   @db.Text
+  active    Boolean  @default(true)
+  updatedBy String?  @db.VarChar(100)
+  createdAt DateTime @default(now()) @db.Timestamp
+  updatedAt DateTime @updatedAt @db.Timestamp
+}
+
+// LYD-69: una sola fila (id "default") con las instrucciones del agente (rol,
+// estilo y reglas). Sin fila se usan las instrucciones por defecto del codigo.
+model AgentConfig {
+  id           String   @id @default("default")
+  instructions String   @db.Text
+  updatedBy    String?  @db.VarChar(100)
+  updatedAt    DateTime @updatedAt @db.Timestamp
+}
+
 model TemplateGroup {
   id        String               @id @default(cuid())
   title     String               @db.VarChar(100)

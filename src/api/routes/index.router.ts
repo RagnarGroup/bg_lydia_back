@@ -13,6 +13,7 @@ import fs from 'fs';
 import mimeTypes from 'mime-types';
 import path from 'path';
 
+import { AgentRouter } from './agent.router';
 import { BotRouter } from './bot.router';
 import { BusinessRouter } from './business.router';
 import { CalendarEventsRouter } from './calendar-events.router';
@@ -239,6 +240,8 @@ router
   // instancia, solo apikey.
   .use('/crm/leads', authGuard['apikey'], new LeadsRouter().router)
   .use('/crm/calendar-events', authGuard['apikey'], new CalendarEventsRouter().router)
+  // LYD-69: seccion "Agente" (conocimiento editable de la sugerencia con IA).
+  .use('/crm/agent', authGuard['apikey'], new AgentRouter().router)
   .use('/crm/template-groups', authGuard['apikey'], new TemplatesRouter().router)
   .use('/crm/templates', authGuard['apikey'], new TemplateItemsRouter().router)
   .use('/crm/insights', authGuard['apikey'], new InsightsRouter().router)
