@@ -1,0 +1,16 @@
+[Unit]
+Description=Lydia codex bridge (codex headless para sugerencias de respuesta)
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/lydia-codex-bridge
+EnvironmentFile=/etc/lydia-codex-bridge.env
+ExecStart=/usr/local/lib/nodejs/node-v24.19.0-linux-x64/bin/node /opt/lydia-codex-bridge/server.mjs
+Restart=on-failure
+RestartSec=5
+Environment=HOME=/root
+Environment=PATH=/usr/local/lib/nodejs/node-v24.19.0-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=multi-user.target

@@ -184,6 +184,11 @@ services:
       # arriba), para que las notas de voz lleguen a WhatsApp como mp3.
       API_AUDIO_CONVERTER: http://audio-converter:4040/process-audio
       API_AUDIO_CONVERTER_KEY: ${API_AUDIO_CONVERTER_KEY}
+
+      # LYD-68: puente HTTP al codex headless del host (servicio systemd
+      # lydia-codex-bridge, escucha solo en el gateway de Docker).
+      CODEX_BRIDGE_URL: http://172.18.0.1:3920
+      CODEX_BRIDGE_TOKEN: ${CODEX_BRIDGE_TOKEN}
     volumes:
       - evolution_instances:/evolution/instances
     networks:
