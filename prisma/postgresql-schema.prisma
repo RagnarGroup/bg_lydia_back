@@ -192,6 +192,10 @@ model Chat {
   archived Boolean @default(false)
   // LYD-47: estado del bot de esta conversacion (a lo sumo uno).
   BotSession BotSession?
+  // LYD-74: etiquetas comerciales del agente IA (intencion, decisor,
+  // siguiente accion, fuente) -- las elige la IA y se pueden corregir a mano.
+  // Valores validos en src/api/services/agent-tags.ts.
+  agentTags Json? @db.JsonB
 
   @@unique([instanceId, remoteJid])
   @@index([instanceId])

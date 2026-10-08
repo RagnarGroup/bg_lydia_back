@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@exceptions';
 import { AgentRole, ChatStatus, Prisma } from '@prisma/client';
 import { status as messageStatus } from '@utils/renderStatus';
 
+import { applyTagPatch, readAgentTags } from './agent-tags';
 import { buildSnippet, escapeLike, normalizeSearchLimit, SEARCH_MIN_LENGTH } from './crm-search.util';
 
 // LYD-60: texto buscable de un mensaje -- texto plano, texto extendido
@@ -250,6 +251,7 @@ export class CrmService {
       contactNameOverride?: string | null;
       contactPhoneOverride?: string | null;
       archived?: boolean;
+      agentTags?: unknown;
     },
   ) {
     const chat = await this.assertChatExists(chatId);
@@ -295,9 +297,17 @@ export class CrmService {
       data.contactPhoneOverride = data.contactPhoneOverride?.trim() || null;
     }
 
+    const { agentTags: agentTagsPatch, ...fields } = data;
+    // LYD-74: correccion manual de las etiquetas del agente IA -- se mezcla
+    // con lo guardado (solo cambian los grupos que vienen en el body).
+    const agentTags =
+      agentTagsPatch !== undefined
+        ? (applyTagPatch(readAgentTags(chat.agentTags), agentTagsPatch) as Prisma.InputJsonObject)
+        : undefined;
+
     return this.prisma.chat.update({
       where: { id: chatId },
-      data,
+      data: { ...fields, agentTags },
       include: { Agent: true },
     });
   }
