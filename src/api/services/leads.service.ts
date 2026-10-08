@@ -99,7 +99,13 @@ export class LeadsService {
       // No hay secuencia nativa para un id de texto (cuid) -- generamos el
       // consecutivo dentro de la misma transaccion que el insert para
       // evitar que dos creaciones concurrentes pisen el mismo numero.
-      const count = await tx.lead.count();
+      // LYD-72: se parte del mayor numero usado, no de count() -- al borrar
+      // un lead el count baja y LD-{count+1} chocaba con uno existente.
+      const existing = await tx.lead.findMany({ select: { leadNumber: true } });
+      const lastNumber = existing.reduce((max, { leadNumber }) => {
+        const n = Number(leadNumber.replace(/^LD-/, ''));
+        return Number.isInteger(n) && n > max ? n : max;
+      }, 0);
       return tx.lead.create({
         data: {
           contactName: data.contactName,
@@ -117,7 +123,7 @@ export class LeadsService {
           observations: data.observations,
           chatId: data.chatId ?? null,
           assignedAgentId: data.assignedAgentId ?? null,
-          leadNumber: `LD-${count + 1}`,
+          leadNumber: `LD-${lastNumber + 1}`,
           ...(historicalDates ?? {}),
         },
         include: { Agent: true, Chat: true },
