@@ -61,6 +61,11 @@ export class CrmRouter {
           }),
         );
       })
+      // LYD-77: autoasignacion al responder -- solo toma el chat si no tiene
+      // responsable; nunca le cambia el dueño a uno ya asignado.
+      .post('/conversations/:chatId/claim', async (req, res) => {
+        return res.json(await crmController.claimConversation(req.params.chatId, req.body ?? {}));
+      })
       .delete('/conversations/:chatId', async (req, res) => {
         await crmController.deleteConversation(req.params.chatId);
         return res.status(204).send();

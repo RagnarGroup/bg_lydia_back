@@ -341,6 +341,33 @@ export class CrmService {
   // Se bloquea si hay un Lead vinculado -- Lead.chatId no tiene cascada
   // (a proposito, ver schema) para no destruir informacion de pipeline
   // comercial sin que alguien lo decida a mano primero.
+  // LYD-77: la asesora que responde un chat sin responsable queda asignada.
+  // El update es condicional (assignedAgentId null) para que dos asesoras
+  // respondiendo a la vez no se pisen y para que un chat ya asignado solo
+  // cambie de dueño a mano (updateConversation). El lead del chat sigue la
+  // misma regla.
+  public async claimConversation(chatId: string, agentId?: string) {
+    await this.assertChatExists(chatId);
+    if (!agentId) {
+      throw new BadRequestException('agentId is required');
+    }
+    const agent = await this.prisma.agent.findUnique({ where: { id: agentId } });
+    if (!agent) {
+      throw new BadRequestException(`Agent "${agentId}" not found`);
+    }
+
+    await this.prisma.chat.updateMany({
+      where: { id: chatId, assignedAgentId: null },
+      data: { assignedAgentId: agentId },
+    });
+    await this.prisma.lead.updateMany({
+      where: { chatId, assignedAgentId: null },
+      data: { assignedAgentId: agentId },
+    });
+
+    return this.prisma.chat.findUnique({ where: { id: chatId }, include: { Agent: true } });
+  }
+
   public async deleteConversation(chatId: string) {
     const chat = await this.assertChatExists(chatId);
 
