@@ -37,6 +37,7 @@ export class LeadsService {
     source: string;
     budget?: string;
     budgetAmount?: number;
+    stage?: LeadStage;
     observations?: string;
     chatId?: string;
     assignedAgentId?: string;
@@ -66,6 +67,7 @@ export class LeadsService {
       source: string;
       budget?: string;
       budgetAmount?: number;
+      stage?: LeadStage;
       observations?: string;
       chatId?: string;
       assignedAgentId?: string;
@@ -78,6 +80,7 @@ export class LeadsService {
     if (!data?.source?.trim()) {
       throw new BadRequestException('source is required');
     }
+    this.assertValidStage(data.stage);
 
     if (data.assignedAgentId) {
       const agent = await this.prisma.agent.findUnique({ where: { id: data.assignedAgentId } });
@@ -107,6 +110,10 @@ export class LeadsService {
           source: data.source,
           budget: data.budget,
           budgetAmount: data.budgetAmount ?? 0,
+          // LYD-71: antes se ignoraba y todo lead nuevo quedaba en
+          // contacto_inicial, aunque el panel del chat lo creara al elegir
+          // otro estado.
+          stage: data.stage,
           observations: data.observations,
           chatId: data.chatId ?? null,
           assignedAgentId: data.assignedAgentId ?? null,
@@ -137,6 +144,7 @@ export class LeadsService {
     },
   ) {
     await this.assertLeadExists(id);
+    this.assertValidStage(data.stage);
 
     if (data.assignedAgentId) {
       const agent = await this.prisma.agent.findUnique({ where: { id: data.assignedAgentId } });
@@ -155,6 +163,12 @@ export class LeadsService {
   public async deleteLead(id: string) {
     await this.assertLeadExists(id);
     await this.prisma.lead.delete({ where: { id } });
+  }
+
+  private assertValidStage(stage?: LeadStage) {
+    if (stage !== undefined && !Object.values(LeadStage).includes(stage)) {
+      throw new BadRequestException(`Invalid stage "${stage}"`);
+    }
   }
 
   private async assertLeadExists(id: string) {
