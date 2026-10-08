@@ -40,8 +40,15 @@ export class CrmRouter {
         return res.json(await crmController.getConversation(req.params.chatId));
       })
       .patch('/conversations/:chatId', async (req, res) => {
-        const { status, assignedAgentId, unreadMessages, contactNameOverride, contactPhoneOverride, archived } =
-          req.body ?? {};
+        const {
+          status,
+          assignedAgentId,
+          unreadMessages,
+          contactNameOverride,
+          contactPhoneOverride,
+          archived,
+          agentTags,
+        } = req.body ?? {};
         return res.json(
           await crmController.updateConversation(req.params.chatId, {
             status,
@@ -50,6 +57,7 @@ export class CrmRouter {
             contactNameOverride,
             contactPhoneOverride,
             archived,
+            agentTags,
           }),
         );
       })
@@ -60,6 +68,10 @@ export class CrmRouter {
       // LYD-68: pide a la IA una respuesta sugerida; no envia nada al cliente.
       .post('/conversations/:chatId/suggest-reply', async (req, res) => {
         return res.json(await crmController.suggestReply(req.params.chatId));
+      })
+      // LYD-74: chat con el agente IA (mensaje + respuesta sugerida + etiquetas).
+      .post('/conversations/:chatId/agent-chat', async (req, res) => {
+        return res.json(await crmController.agentChat(req.params.chatId, { messages: req.body?.messages }));
       })
       .get('/conversations/:chatId/notes', async (req, res) => {
         return res.json(await crmController.listNotes(req.params.chatId));

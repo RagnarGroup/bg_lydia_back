@@ -42,9 +42,15 @@ export class CrmController {
       contactNameOverride?: string | null;
       contactPhoneOverride?: string | null;
       archived?: boolean;
+      agentTags?: unknown;
     },
   ) {
     return this.crmService.updateConversation(chatId, data);
+  }
+
+  // LYD-74: chat de la asesora con el agente IA del panel derecho.
+  public async agentChat(chatId: string, body: { messages?: unknown }) {
+    return this.suggestReplyService.agentChat(chatId, body);
   }
 
   public async deleteConversation(chatId: string) {
