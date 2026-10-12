@@ -4,6 +4,13 @@ import { AgentRole, ChatStatus, Prisma } from '@prisma/client';
 import { status as messageStatus } from '@utils/renderStatus';
 
 import { applyTagPatch, readAgentTags } from './agent-tags';
+import {
+  ConversationChannel,
+  decodeCursor,
+  encodeCursor,
+  messagePreview,
+  NON_WHATSAPP_INTEGRATIONS,
+} from './crm-conversations.util';
 import { buildSnippet, escapeLike, normalizeSearchLimit, SEARCH_MIN_LENGTH } from './crm-search.util';
 
 // LYD-60: texto buscable de un mensaje -- texto plano, texto extendido
@@ -19,6 +26,10 @@ const MESSAGE_SEARCH_TEXT = Prisma.raw(`COALESCE(
   m."message"->'documentMessage'->>'fileName',
   ''
 )`);
+
+// LYD-79: clave de orden de la lista del inbox -- hora del ultimo mensaje y,
+// para chats sin ningun mensaje (caso raro), la de su ultima modificacion.
+const CHAT_SORT_KEY = Prisma.raw(`COALESCE(c."lastMessageAt", FLOOR(EXTRACT(EPOCH FROM c."updatedAt"))::int, 0)`);
 
 type SearchMessageRow = {
   messageId: string;
@@ -62,111 +73,129 @@ export class CrmService {
   // (ambos son unique por [instanceId, remoteJid] pero independientes) --
   // se cruzan a mano aca en vez de duplicar el contacto en una tabla propia.
   //
-  // LYD-31: instanceName ahora es opcional -- sin el, se listan las conversaciones
-  // de TODAS las instancias (canales) juntas, mezcladas y ordenadas por ultimo
-  // mensaje. remoteJid solo es unico dentro de una instancia (dos canales podrian
-  // en teoria compartir el mismo valor), asi que contactos y ultimo mensaje se
-  // resuelven por instancia, no en una sola consulta cruzada.
-  public async listConversations(params: { instanceName?: string; status?: ChatStatus; assignedAgentId?: string }) {
-    const { instanceName, status, assignedAgentId } = params;
+  // LYD-31: instanceName es opcional -- sin el, se listan las conversaciones de
+  // TODAS las instancias (canales) juntas, ordenadas por ultimo mensaje.
+  //
+  // LYD-79: el ultimo mensaje vive en Chat.lastMessageAt/lastMessageId (lo
+  // mantienen triggers de Postgres), asi que la lista sale de una sola consulta
+  // sobre Chat en vez de recorrer todos los mensajes. Con `limit` pagina por
+  // cursor y devuelve { conversations, nextCursor }; sin `limit` devuelve el
+  // array completo, como antes. Se ordena por el ultimo mensaje y no por
+  // Chat.updatedAt: ese lo pisa Prisma con cualquier escritura a la fila
+  // (incluido "marcar como leida"), y abrir un chat lo subia al tope.
+  public async listConversations(params: {
+    instanceName?: string;
+    status?: ChatStatus;
+    assignedAgentId?: string;
+    channel?: ConversationChannel;
+    q?: string;
+    limit?: number;
+    cursor?: string;
+  }) {
+    const { instanceName, status, assignedAgentId, channel, limit } = params;
 
-    let instances: { id: string; name: string; integration: string }[];
     if (instanceName) {
       const instance = await this.prisma.instance.findUnique({ where: { name: instanceName } });
       if (!instance) {
         throw new NotFoundException(`Instance "${instanceName}" not found`);
       }
-      instances = [instance];
-    } else {
-      instances = await this.prisma.instance.findMany();
     }
 
-    const byInstance = await Promise.all(
-      instances.map(async (instance) => {
-        // Sin orderBy aca a proposito: Chat.updatedAt es @updatedAt de Prisma, se pisa con
-        // cualquier escritura a la fila -- incluido el PATCH de "marcar como leida" al abrir
-        // la conversacion (unreadMessages: 0). Ordenar por eso hacia que abrir un chat lo
-        // subiera al tope aunque no hubiera mensaje nuevo. El orden real se calcula al final,
-        // por el timestamp del ultimo mensaje, que solo cambia cuando llega o se envia uno.
-        const chats = await this.prisma.chat.findMany({
-          where: {
-            instanceId: instance.id,
-            // LYD-40: "cerradas" (archivadas) no aparecen en la lista
-            // principal del inbox -- reversible, el historial sigue ahi.
-            archived: false,
-            ...(status ? { status } : {}),
-            ...(assignedAgentId ? { assignedAgentId } : {}),
-          },
-          include: { Agent: true },
-        });
+    const cursor = params.cursor ? decodeCursor(params.cursor) : null;
+    if (params.cursor && !cursor) {
+      throw new BadRequestException('cursor invalido');
+    }
 
-        const remoteJids = chats.map((c) => c.remoteJid);
-        const contacts = remoteJids.length
-          ? await this.prisma.contact.findMany({
-              where: { instanceId: instance.id, remoteJid: { in: remoteJids } },
-            })
-          : [];
-        const contactByJid = new Map(contacts.map((c) => [c.remoteJid, c]));
-        const lastMessageByJid = await this.lastMessageByRemoteJid(instance.id, remoteJids);
+    const conditions: Prisma.Sql[] = [Prisma.sql`c."archived" = false`];
+    if (status) conditions.push(Prisma.sql`c."status"::text = ${status}`);
+    if (assignedAgentId) conditions.push(Prisma.sql`c."assignedAgentId" = ${assignedAgentId}`);
+    if (instanceName) conditions.push(Prisma.sql`i."name" = ${instanceName}`);
+    if (channel === 'messenger') conditions.push(Prisma.sql`i."integration" = 'FACEBOOK-MESSENGER'`);
+    if (channel === 'instagram') conditions.push(Prisma.sql`i."integration" = 'INSTAGRAM'`);
+    if (channel === 'whatsapp') {
+      conditions.push(Prisma.sql`i."integration" NOT IN (${Prisma.join([...NON_WHATSAPP_INTEGRATIONS])})`);
+    }
+    const term = params.q?.trim();
+    if (term) {
+      const pattern = `%${escapeLike(term)}%`;
+      conditions.push(Prisma.sql`(
+        c."name" ILIKE ${pattern}
+        OR c."contactNameOverride" ILIKE ${pattern}
+        OR c."contactPhoneOverride" ILIKE ${pattern}
+        OR c."remoteJid" ILIKE ${pattern}
+        OR EXISTS (
+          SELECT 1 FROM "Contact" ct
+          WHERE ct."instanceId" = c."instanceId" AND ct."remoteJid" = c."remoteJid" AND ct."pushName" ILIKE ${pattern}
+        )
+      )`);
+    }
+    if (cursor) conditions.push(Prisma.sql`(${CHAT_SORT_KEY}, c."id") < (${cursor.sortKey}, ${cursor.id})`);
 
-        return chats.map((chat) => ({
-          ...chat,
-          instanceName: instance.name,
-          integration: instance.integration,
-          contact: contactByJid.get(chat.remoteJid) ?? null,
-          lastMessage: lastMessageByJid.get(chat.remoteJid) ?? null,
-        }));
+    // Se pide uno de mas para saber si hay pagina siguiente.
+    const rows = await this.prisma.$queryRaw<{ id: string; sortKey: number }[]>`
+      SELECT c."id", ${CHAT_SORT_KEY} AS "sortKey"
+      FROM "Chat" c
+      JOIN "Instance" i ON i."id" = c."instanceId"
+      WHERE ${Prisma.join(conditions, ' AND ')}
+      ORDER BY "sortKey" DESC, c."id" DESC
+      ${limit ? Prisma.sql`LIMIT ${limit + 1}` : Prisma.empty}
+    `;
+
+    const page = limit ? rows.slice(0, limit) : rows;
+    const conversations = await this.hydrateConversations(page.map((r) => r.id));
+
+    if (!limit) return conversations;
+    const last = page[page.length - 1];
+    const nextCursor =
+      rows.length > limit && last ? encodeCursor({ sortKey: Number(last.sortKey), id: last.id }) : null;
+    return { conversations, nextCursor };
+  }
+
+  // Arma cada conversacion con su agente, instancia, contacto y ultimo
+  // mensaje, respetando el orden de `ids`. Mismo formato de respuesta que
+  // antes de LYD-79 (el front no cambia).
+  private async hydrateConversations(ids: string[]) {
+    if (!ids.length) return [];
+
+    const chats = await this.prisma.chat.findMany({ where: { id: { in: ids } }, include: { Agent: true } });
+    const instanceIds = [...new Set(chats.map((c) => c.instanceId))];
+    const lastMessageIds = chats.map((c) => c.lastMessageId).filter((id): id is string => !!id);
+
+    const [instances, contacts, lastMessages] = await Promise.all([
+      this.prisma.instance.findMany({
+        where: { id: { in: instanceIds } },
+        select: { id: true, name: true, integration: true },
       }),
-    );
+      this.prisma.contact.findMany({
+        where: { instanceId: { in: instanceIds }, remoteJid: { in: chats.map((c) => c.remoteJid) } },
+      }),
+      this.prisma.message.findMany({
+        where: { id: { in: lastMessageIds } },
+        select: { id: true, message: true, messageTimestamp: true },
+      }),
+    ]);
 
-    return byInstance.flat().sort((a, b) => {
-      // Chats sin ningun mensaje (recien creados, caso raro) van al final por updatedAt.
-      const ta = a.lastMessage?.timestamp ?? Math.floor(a.updatedAt?.getTime() / 1000);
-      const tb = b.lastMessage?.timestamp ?? Math.floor(b.updatedAt?.getTime() / 1000);
-      return tb - ta;
-    });
-  }
+    const instanceById = new Map(instances.map((i) => [i.id, i]));
+    const contactByKey = new Map(contacts.map((c) => [`${c.instanceId}|${c.remoteJid}`, c]));
+    const messageById = new Map(lastMessages.map((m) => [m.id, m]));
+    const chatById = new Map(chats.map((c) => [c.id, c]));
 
-  // Message.key es JSON (no hay columna remoteJid propia) -- no hay forma de
-  // pedirle a Prisma "el mas nuevo por remoteJid" en una sola query sin SQL
-  // crudo. Con el volumen de mensajes de una instancia nueva esto alcanza;
-  // si el historial crece mucho, esto se vuelve candidato a reemplazar por
-  // un SELECT DISTINCT ON (key->>'remoteJid') ... ORDER BY messageTimestamp
-  // DESC con indice dedicado.
-  private async lastMessageByRemoteJid(instanceId: string, remoteJids: string[]) {
-    const result = new Map<string, { content: string; timestamp: number }>();
-    if (!remoteJids.length) return result;
-
-    const messages = await this.prisma.message.findMany({
-      where: {
-        instanceId,
-        OR: remoteJids.map((remoteJid) => ({ key: { path: ['remoteJid'], equals: remoteJid } })),
-      },
-      orderBy: { messageTimestamp: 'desc' },
-      select: { key: true, message: true, messageTimestamp: true },
-    });
-
-    for (const m of messages) {
-      const remoteJid = (m.key as { remoteJid?: string })?.remoteJid;
-      if (!remoteJid || result.has(remoteJid)) continue; // ya ordenado desc: el primero que aparece es el mas nuevo
-      const body = m.message as { conversation?: string; extendedTextMessage?: { text?: string } };
-      const content = body?.conversation ?? body?.extendedTextMessage?.text ?? this.mediaPreviewLabel(m.message);
-      result.set(remoteJid, { content, timestamp: m.messageTimestamp });
-    }
-    return result;
-  }
-
-  // LYD-15: sin esto, un mensaje que es solo una foto/audio/documento (sin
-  // texto) mostraba el preview de "Ultimo mensaje" vacio en la lista de
-  // conversaciones.
-  private mediaPreviewLabel(message: unknown): string {
-    const body = message as Record<string, unknown>;
-    if (body?.imageMessage) return 'Foto';
-    if (body?.videoMessage) return 'Video';
-    if (body?.audioMessage) return 'Audio';
-    if (body?.documentMessage) return 'Documento';
-    if (body?.stickerMessage) return 'Sticker';
-    return '';
+    return ids
+      .map((id) => chatById.get(id))
+      .filter((chat): chat is (typeof chats)[number] => !!chat)
+      .map((chat) => {
+        const instance = instanceById.get(chat.instanceId);
+        const message = chat.lastMessageId ? messageById.get(chat.lastMessageId) : undefined;
+        return {
+          ...chat,
+          instanceName: instance?.name,
+          integration: instance?.integration,
+          contact: contactByKey.get(`${chat.instanceId}|${chat.remoteJid}`) ?? null,
+          lastMessage: message
+            ? { content: messagePreview(message.message), timestamp: message.messageTimestamp }
+            : null,
+        };
+      });
   }
 
   // LYD-60: busqueda contextual dentro de los mensajes (estilo WhatsApp).
@@ -334,8 +363,7 @@ export class CrmService {
 
   // LYD-40: borrado real (Chat + Message) -- distinto de "archivar"
   // (Chat.archived), que es reversible. Message no tiene FK a Chat (se
-  // identifica por instanceId + key.remoteJid, igual que en
-  // lastMessageByRemoteJid mas arriba), asi que hay que borrarlos aparte;
+  // identifica por instanceId + key.remoteJid), asi que hay que borrarlos aparte;
   // ConversationNote sale solo por el onDelete: Cascade del schema.
   //
   // Se bloquea si hay un Lead vinculado -- Lead.chatId no tiene cascada
