@@ -196,6 +196,11 @@ model Chat {
   // siguiente accion, fuente) -- las elige la IA y se pueden corregir a mano.
   // Valores validos en src/api/services/agent-tags.ts.
   agentTags Json? @db.JsonB
+  // LYD-79: ultimo mensaje del chat (hora unix e id de Message), para ordenar
+  // y paginar la lista del inbox sin recorrer Message. Lo mantienen triggers
+  // de Postgres (migracion 20261012000000_add_chat_last_message), no el codigo.
+  lastMessageAt Int?    @db.Integer
+  lastMessageId String?
 
   @@unique([instanceId, remoteJid])
   @@index([instanceId])

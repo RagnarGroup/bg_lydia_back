@@ -23,12 +23,20 @@ export class CrmRouter {
       })
       .get('/conversations', async (req, res) => {
         // LYD-31: instanceName es opcional -- sin el, se listan todos los canales juntos.
-        const { instanceName, status, assignedAgentId } = req.query as {
+        // LYD-79: limit/cursor paginan (respuesta { conversations, nextCursor });
+        // sin limit, array completo como antes. channel y q filtran en la base.
+        const { instanceName, status, assignedAgentId, channel, q, limit, cursor } = req.query as {
           instanceName?: string;
           status?: ChatStatus;
           assignedAgentId?: string;
+          channel?: string;
+          q?: string;
+          limit?: string;
+          cursor?: string;
         };
-        return res.json(await crmController.listConversations({ instanceName, status, assignedAgentId }));
+        return res.json(
+          await crmController.listConversations({ instanceName, status, assignedAgentId, channel, q, limit, cursor }),
+        );
       })
       // LYD-60: tiene que ir antes de /conversations/:chatId, si no Express
       // toma "search" como un chatId.

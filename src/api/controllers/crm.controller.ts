@@ -1,4 +1,5 @@
 import { CrmService } from '@api/services/crm.service';
+import { normalizeListLimit, parseChannel } from '@api/services/crm-conversations.util';
 import { CrmSuggestReplyService } from '@api/services/crm-suggest-reply.service';
 import { AgentRole, ChatStatus } from '@prisma/client';
 
@@ -16,8 +17,20 @@ export class CrmController {
     return this.crmService.createAgent(data);
   }
 
-  public async listConversations(query: { instanceName?: string; status?: ChatStatus; assignedAgentId?: string }) {
-    return this.crmService.listConversations(query);
+  public async listConversations(query: {
+    instanceName?: string;
+    status?: ChatStatus;
+    assignedAgentId?: string;
+    channel?: string;
+    q?: string;
+    limit?: string;
+    cursor?: string;
+  }) {
+    return this.crmService.listConversations({
+      ...query,
+      channel: parseChannel(query.channel),
+      limit: normalizeListLimit(query.limit),
+    });
   }
 
   public async searchMessages(query: { q?: string; instanceName?: string; limit?: string }) {
