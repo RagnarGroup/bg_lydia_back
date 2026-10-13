@@ -177,6 +177,9 @@ services:
       WA_BUSINESS_VERSION: ${WA_BUSINESS_VERSION:-v23.0}
       WA_BUSINESS_LANGUAGE: ${WA_BUSINESS_LANGUAGE:-es}
 
+      # Token de la landing para POST /public/landing-leads (header x-landing-token). Sin valor: 503.
+      LANDING_WEBHOOK_TOKEN: ${LANDING_WEBHOOK_TOKEN:-}
+
       CONFIG_SESSION_PHONE_CLIENT: "Brittany Chat"
       CONFIG_SESSION_PHONE_NAME: Chrome
 
