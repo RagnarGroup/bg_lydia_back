@@ -14,6 +14,7 @@ import { GroupController } from './controllers/group.controller';
 import { InsightsController } from './controllers/insights.controller';
 import { InstanceController } from './controllers/instance.controller';
 import { LabelController } from './controllers/label.controller';
+import { LandingLeadsController } from './controllers/landing-leads.controller';
 import { LeadsController } from './controllers/leads.controller';
 import { ProxyController } from './controllers/proxy.controller';
 import { SendMessageController } from './controllers/sendMessage.controller';
@@ -54,6 +55,7 @@ import { CalendarEventsService } from './services/calendar-events.service';
 import { CrmService } from './services/crm.service';
 import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
+import { LandingLeadsService } from './services/landing-leads.service';
 import { LeadsService } from './services/leads.service';
 import { WAMonitoringService } from './services/monitor.service';
 import { ProxyService } from './services/proxy.service';
@@ -112,6 +114,9 @@ export const agentController = new AgentController(agentKnowledgeService, sugges
 
 const leadsService = new LeadsService(prismaRepository);
 export const leadsController = new LeadsController(leadsService);
+
+const landingLeadsService = new LandingLeadsService(prismaRepository);
+export const landingLeadsController = new LandingLeadsController(landingLeadsService);
 
 const calendarEventsService = new CalendarEventsService(prismaRepository);
 export const calendarEventsController = new CalendarEventsController(calendarEventsService);

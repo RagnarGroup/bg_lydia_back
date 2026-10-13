@@ -24,6 +24,7 @@ import { GroupRouter } from './group.router';
 import { InsightsRouter } from './insights.router';
 import { InstanceRouter } from './instance.router';
 import { LabelRouter } from './label.router';
+import { LandingLeadsPublicRouter, LandingLeadsRouter } from './landing-leads.router';
 import { LeadsRouter } from './leads.router';
 import { ProxyRouter } from './proxy.router';
 import { MessageRouter } from './sendMessage.router';
@@ -40,7 +41,9 @@ enum HttpStatus {
   FORBIDDEN = 403,
   BAD_REQUEST = 400,
   UNAUTHORIZED = 401,
+  CONFLICT = 409,
   INTERNAL_SERVER_ERROR = 500,
+  SERVICE_UNAVAILABLE = 503,
 }
 
 const router: Router = Router();
@@ -240,6 +243,8 @@ router
   // instancia, solo apikey.
   .use('/crm/leads', authGuard['apikey'], new LeadsRouter().router)
   .use('/crm/calendar-events', authGuard['apikey'], new CalendarEventsRouter().router)
+  // LYD-83: cola de leads de la landing (visitas solicitadas).
+  .use('/crm/landing-leads', authGuard['apikey'], new LandingLeadsRouter().router)
   // LYD-69: seccion "Agente" (conocimiento editable de la sugerencia con IA).
   .use('/crm/agent', authGuard['apikey'], new AgentRouter().router)
   .use('/crm/template-groups', authGuard['apikey'], new TemplatesRouter().router)
@@ -247,6 +252,8 @@ router
   .use('/crm/insights', authGuard['apikey'], new InsightsRouter().router)
   .use('/crm/bot', authGuard['apikey'], new BotRouter().router)
   .use('/crm/welcome-message', authGuard['apikey'], new WelcomeMessageRouter().router)
+  // LYD-83: publico, con token propio (x-landing-token). Antes del ChannelRouter y fuera de /crm.
+  .use('/public/landing-leads', new LandingLeadsPublicRouter().router)
   .use('', new ChannelRouter(configService, ...guards).router)
   .use('', new EventRouter(configService, ...guards).router)
   .use('', new ChatbotRouter(...guards).router)

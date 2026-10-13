@@ -1,6 +1,21 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
-import { LeadStage } from '@prisma/client';
+import { LeadStage, Prisma } from '@prisma/client';
+
+// No hay secuencia nativa para un id de texto (cuid) -- generamos el
+// consecutivo dentro de la misma transaccion que el insert para evitar que dos
+// creaciones concurrentes pisen el mismo numero.
+// LYD-72: se parte del mayor numero usado, no de count() -- al borrar un lead
+// el count baja y LD-{count+1} chocaba con uno existente.
+// LYD-83: extraido para reutilizarlo desde LandingLeadsService.
+export async function nextLeadNumber(tx: Pick<Prisma.TransactionClient, 'lead'>): Promise<string> {
+  const existing = await tx.lead.findMany({ select: { leadNumber: true } });
+  const lastNumber = existing.reduce((max, { leadNumber }) => {
+    const n = Number(leadNumber.replace(/^LD-/, ''));
+    return Number.isInteger(n) && n > max ? n : max;
+  }, 0);
+  return `LD-${lastNumber + 1}`;
+}
 
 // LYD-8: pipeline de ventas de Lydia. Lead es su propia entidad (no una
 // extension de Chat) porque puede existir sin conversacion de WhatsApp
@@ -96,16 +111,7 @@ export class LeadsService {
     }
 
     return this.prisma.$transaction(async (tx) => {
-      // No hay secuencia nativa para un id de texto (cuid) -- generamos el
-      // consecutivo dentro de la misma transaccion que el insert para
-      // evitar que dos creaciones concurrentes pisen el mismo numero.
-      // LYD-72: se parte del mayor numero usado, no de count() -- al borrar
-      // un lead el count baja y LD-{count+1} chocaba con uno existente.
-      const existing = await tx.lead.findMany({ select: { leadNumber: true } });
-      const lastNumber = existing.reduce((max, { leadNumber }) => {
-        const n = Number(leadNumber.replace(/^LD-/, ''));
-        return Number.isInteger(n) && n > max ? n : max;
-      }, 0);
+      const leadNumber = await nextLeadNumber(tx);
       return tx.lead.create({
         data: {
           contactName: data.contactName,
@@ -123,7 +129,7 @@ export class LeadsService {
           observations: data.observations,
           chatId: data.chatId ?? null,
           assignedAgentId: data.assignedAgentId ?? null,
-          leadNumber: `LD-${lastNumber + 1}`,
+          leadNumber,
           ...(historicalDates ?? {}),
         },
         include: { Agent: true, Chat: true },

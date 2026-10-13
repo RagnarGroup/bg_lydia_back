@@ -37,11 +37,13 @@ SEC_PG_PASS=$(openssl rand -hex 18)
 SEC_REDIS_PASS=$(openssl rand -hex 18)
 SEC_EVO_KEY=$(openssl rand -hex 24)
 SEC_AUDIO_CONVERTER_KEY=$(openssl rand -hex 24)
+SEC_LANDING_TOKEN=$(openssl rand -hex 24)
 
 sed -i "s|reemplazar_por_password_seguro_sin_caracteres_conflictivos|${SEC_PG_PASS}|g" "$ENV_FILE"
 sed -i "s|reemplazar_por_password_seguro_redis|${SEC_REDIS_PASS}|g" "$ENV_FILE"
 sed -i "s|reemplazar_por_token_secreto_evolution|${SEC_EVO_KEY}|g" "$ENV_FILE"
 sed -i "s|reemplazar_por_token_secreto_audio_converter|${SEC_AUDIO_CONVERTER_KEY}|g" "$ENV_FILE"
+sed -i "s|reemplazar_por_token_secreto_landing|${SEC_LANDING_TOKEN}|g" "$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 
