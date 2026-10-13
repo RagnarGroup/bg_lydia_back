@@ -85,6 +85,27 @@ enum LeadStage {
   venta_perdida
 }
 
+// LYD-83: estado de la visita solicitada desde la landing.
+enum LeadVisitStatus {
+  solicitada
+  confirmada
+  reprogramada
+  asistio
+  no_asistio
+  cancelada
+}
+
+// LYD-83: tipo de entrada del historial de un lead.
+enum LeadActivityType {
+  creado
+  tomado
+  liberado
+  estado_visita
+  reprogramada
+  nota
+  etapa
+}
+
 // LYD-9: tipo de evento en el calendario por agente.
 enum CalendarEventType {
   chat
@@ -222,6 +243,7 @@ model Agent {
   Note          ConversationNote[]
   Lead          Lead[]
   CalendarEvent CalendarEvent[]
+  LeadActivity  LeadActivity[]
 }
 
 model ConversationNote {
@@ -262,10 +284,40 @@ model Lead {
   createdAt       DateTime  @default(now()) @db.Timestamp
   updatedAt       DateTime  @updatedAt @db.Timestamp
 
+  // LYD-83: leads de la landing (visitas solicitadas). sede/programa son
+  // texto validado en el service (ver landing-leads.constants.ts). visitAt es
+  // Timestamptz porque es un instante absoluto (la landing manda hora de Lima);
+  // el resto de columnas del schema son Timestamp sin zona. externalId es el
+  // id de idempotencia que manda la landing.
+  sede        String?          @db.VarChar(50)
+  programa    String?          @db.VarChar(30)
+  visitAt     DateTime?        @db.Timestamptz(3)
+  visitStatus LeadVisitStatus?
+  externalId  String?          @unique @db.VarChar(120)
+
   CalendarEvent CalendarEvent[]
+  LeadActivity  LeadActivity[]
 
   @@index([stage])
   @@index([assignedAgentId])
+  @@index([source])
+  @@index([sede])
+  @@index([visitAt])
+}
+
+// LYD-83: historial (trazabilidad) de un lead.
+model LeadActivity {
+  id        String           @id @default(cuid())
+  Lead      Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadId    String
+  Agent     Agent?           @relation(fields: [agentId], references: [id])
+  agentId   String?
+  type      LeadActivityType
+  content   String?          @db.Text
+  meta      Json?
+  createdAt DateTime         @default(now()) @db.Timestamp
+
+  @@index([leadId, createdAt])
 }
 
 // LYD-9: evento de calendario por agente (chat agendado, nota, tarea o
