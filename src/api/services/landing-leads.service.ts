@@ -26,6 +26,20 @@ const CLOSING_STATUSES: LeadVisitStatus[] = [
   LeadVisitStatus.cancelada,
 ];
 
+const MAX_TAGS = 10;
+const TAG_REGEX = /^[A-Z0-9_]{1,50}$/;
+const ATTRIBUTION_KEYS = [
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+  'fbclid',
+  'referrer',
+  'landing_url',
+] as const;
+const MAX_ATTRIBUTION_VALUE = 500;
+
 const agentSelect = { id: true, name: true, color: true } as const;
 
 type LeadWithList = Prisma.LeadGetPayload<{
@@ -42,6 +56,11 @@ export type LandingLeadCreateBody = {
   fecha: string;
   hora: string;
   pageUrl?: string;
+  // LYD-87: opcionales (campana Au Pair); el body de la landing de inscripciones no los manda.
+  edad?: number;
+  nivelIngles?: string;
+  tags?: string[];
+  attribution?: Record<string, unknown>;
 };
 
 export class LandingLeadsService {
@@ -77,7 +96,9 @@ export class LandingLeadsService {
             visitStatus: LeadVisitStatus.solicitada,
             externalId: input.externalId,
             assignedAgentId: null,
-            observations: input.pageUrl ? `Origen: ${input.pageUrl}` : null,
+            observations: input.observations,
+            tags: input.tags,
+            ...(input.attribution ? { attribution: input.attribution } : {}),
           },
           select: { id: true, leadNumber: true },
         });
@@ -92,7 +113,11 @@ export class LandingLeadsService {
           },
         });
         await tx.leadActivity.create({
-          data: { leadId: created.id, type: LeadActivityType.creado, meta: { origen: 'landing' } },
+          data: {
+            leadId: created.id,
+            type: LeadActivityType.creado,
+            meta: { origen: 'landing', ...(input.tags.length ? { tags: input.tags } : {}) },
+          },
         });
         return created;
       });
@@ -119,8 +144,10 @@ export class LandingLeadsService {
     to?: string;
     unclaimed?: string;
     search?: string;
+    programa?: string;
+    tag?: string;
   }) {
-    const { sede, visitStatus, from, to, unclaimed, search } = params;
+    const { sede, visitStatus, from, to, unclaimed, search, programa, tag } = params;
     if (visitStatus) this.assertVisitStatus(visitStatus);
 
     const visitAt: Prisma.DateTimeNullableFilter = {};
@@ -129,6 +156,8 @@ export class LandingLeadsService {
 
     const where: Prisma.LeadWhereInput = { source: LANDING_SOURCE };
     if (sede) where.sede = sede;
+    if (programa) where.programa = programa;
+    if (tag) where.tags = { has: tag };
     if (visitStatus) where.visitStatus = visitStatus as LeadVisitStatus;
     if (visitAt.gte || visitAt.lte) where.visitAt = visitAt;
     if (unclaimed === 'true') {
@@ -197,6 +226,7 @@ export class LandingLeadsService {
     return {
       ...this.toLandingLead({ ...lead, LeadActivity: lastActivity ? [lastActivity] : [] }),
       observations: lead.observations,
+      attribution: lead.attribution,
       activities: lead.LeadActivity.map((a) => ({
         id: a.id,
         type: a.type,
@@ -387,6 +417,7 @@ export class LandingLeadsService {
       sede: l.sede,
       ciudad: l.sede ? ((LANDING_SEDE_CIUDAD as Record<string, string>)[l.sede] ?? null) : null,
       programa: l.programa,
+      tags: l.tags,
       visitAt: l.visitAt ? l.visitAt.toISOString() : null,
       visitStatus: l.visitStatus,
       stage: l.stage,
@@ -480,6 +511,59 @@ export class LandingLeadsService {
       throw new BadRequestException('fecha is not a valid date');
     }
 
-    return { programa, sede, nombre, whatsapp, correo, externalId, pageUrl, visitAt };
+    const edad = this.optionalAge(body.edad);
+    const nivelIngles = this.optionalText(body.nivelIngles, 'nivelIngles', 30);
+    const tags = this.optionalTags(body.tags);
+    const attribution = this.optionalAttribution(body.attribution);
+    const observations =
+      [
+        edad !== undefined ? `Edad: ${edad}` : null,
+        nivelIngles ? `Nivel de inglés: ${nivelIngles}` : null,
+        pageUrl ? `Origen: ${pageUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || null;
+
+    return { programa, sede, nombre, whatsapp, correo, externalId, pageUrl, visitAt, tags, attribution, observations };
+  }
+
+  private optionalAge(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === '') return undefined;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value < 17 || value > 99) {
+      throw new BadRequestException('edad must be an integer between 17 and 99');
+    }
+    return value;
+  }
+
+  private optionalTags(value: unknown): string[] {
+    if (value === undefined || value === null) return [];
+    if (!Array.isArray(value)) throw new BadRequestException('tags must be an array');
+    if (value.length > MAX_TAGS) throw new BadRequestException(`tags must have at most ${MAX_TAGS} items`);
+    for (const t of value) {
+      if (typeof t !== 'string' || !TAG_REGEX.test(t)) {
+        throw new BadRequestException('each tag must match /^[A-Z0-9_]{1,50}$/');
+      }
+    }
+    return [...new Set(value as string[])];
+  }
+
+  // Solo las keys conocidas; el resto se ignora. Sin ninguna key valida no se guarda nada.
+  private optionalAttribution(value: unknown): Record<string, string> | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'object' || Array.isArray(value))
+      throw new BadRequestException('attribution must be an object');
+    const src = value as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const key of ATTRIBUTION_KEYS) {
+      const v = src[key];
+      if (v === undefined || v === null || v === '') continue;
+      if (typeof v !== 'string') throw new BadRequestException(`attribution.${key} must be a string`);
+      if (v.length > MAX_ATTRIBUTION_VALUE) {
+        throw new BadRequestException(`attribution.${key} must be at most ${MAX_ATTRIBUTION_VALUE} characters`);
+      }
+      const t = v.trim();
+      if (t) out[key] = t;
+    }
+    return Object.keys(out).length ? out : undefined;
   }
 }

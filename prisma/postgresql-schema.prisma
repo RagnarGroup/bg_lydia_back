@@ -295,6 +295,11 @@ model Lead {
   visitStatus LeadVisitStatus?
   externalId  String?          @unique @db.VarChar(120)
 
+  // LYD-87: etiquetas de campana (ej. AUPAIR_USA) y atribucion (UTMs, fbclid,
+  // referrer, landing_url) que reenvia la landing.
+  tags        String[]         @default([])
+  attribution Json?            @db.JsonB
+
   CalendarEvent CalendarEvent[]
   LeadActivity  LeadActivity[]
 
@@ -303,6 +308,7 @@ model Lead {
   @@index([source])
   @@index([sede])
   @@index([visitAt])
+  @@index([tags], type: Gin)
 }
 
 // LYD-83: historial (trazabilidad) de un lead.
