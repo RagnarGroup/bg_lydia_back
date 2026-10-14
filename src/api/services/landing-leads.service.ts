@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException, ForbiddenException, NotFoundExc
 import { LeadActivityType, LeadStage, LeadVisitStatus, Prisma } from '@prisma/client';
 
 import {
+  LANDING_DEFAULT_TAG,
   LANDING_PROGRAMAS,
   LANDING_SEDE_CIUDAD,
   LANDING_SEDES,
@@ -513,7 +514,8 @@ export class LandingLeadsService {
 
     const edad = this.optionalAge(body.edad);
     const nivelIngles = this.optionalText(body.nivelIngles, 'nivelIngles', 30);
-    const tags = this.optionalTags(body.tags);
+    const explicitTags = this.optionalTags(body.tags);
+    const tags = explicitTags.length ? explicitTags : [LANDING_DEFAULT_TAG];
     const attribution = this.optionalAttribution(body.attribution);
     const observations =
       [

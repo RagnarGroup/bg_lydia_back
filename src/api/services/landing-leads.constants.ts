@@ -16,5 +16,9 @@ export const LANDING_PROGRAMAS = ['Adultos', 'Jóvenes', 'Niños', 'Au Pair'] as
 
 export const LANDING_SOURCE = 'landing';
 
+// Categoria del formulario de origen. El de brittanygroup.edu.pe/inscripciones
+// no manda tags, asi que un lead sin tags es de inscripciones; Au Pair manda AUPAIR.
+export const LANDING_DEFAULT_TAG = 'INSCRIPCIONES';
+
 // La landing manda fecha y hora locales de Peru (sin DST, siempre UTC-5).
 export const LANDING_TZ_OFFSET = '-05:00';
