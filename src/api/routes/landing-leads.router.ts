@@ -22,6 +22,8 @@ export class LandingLeadsRouter {
             to: q.to,
             unclaimed: q.unclaimed,
             search: q.search,
+            programa: q.programa,
+            tag: q.tag,
           }),
         );
       })

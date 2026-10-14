@@ -12,7 +12,7 @@ export type LandingSede = keyof typeof LANDING_SEDE_CIUDAD;
 
 export const LANDING_SEDES = Object.keys(LANDING_SEDE_CIUDAD) as LandingSede[];
 
-export const LANDING_PROGRAMAS = ['Adultos', 'Jóvenes', 'Niños'] as const;
+export const LANDING_PROGRAMAS = ['Adultos', 'Jóvenes', 'Niños', 'Au Pair'] as const;
 
 export const LANDING_SOURCE = 'landing';
 
