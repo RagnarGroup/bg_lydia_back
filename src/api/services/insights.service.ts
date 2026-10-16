@@ -1,22 +1,31 @@
 import { PrismaRepository } from '@api/repository/repository.service';
+import { BadRequestException } from '@exceptions';
+import { LeadActivityType, LeadStage, Prisma } from '@prisma/client';
 
 // LYD-11: agregados de solo lectura sobre Chat/Lead/CalendarEvent para el
 // dashboard personal (PersonalDashboard.tsx). No incluye mensajesEntrantes
 // por canal, lapsoMedioRespuesta ni deltasPorSemana -- esos necesitan
-// timestamps de mensajes que hoy no se modelan (ver LYD-11, ticket de
-// seguimiento aparte).
+// calcularse sobre Message (LYD-94).
+//
+// LYD-93: from/to (ISO) filtran solo las metricas de flujo -- leads
+// ganados/perdidos (cuando llegaron a esa etapa), fuentes (leads creados) y
+// tareas (startAt). Dialogos vigentes/sin replica, leads activos y leads sin
+// tareas son estado actual y no dependen del periodo.
 export class InsightsService {
   constructor(private readonly prisma: PrismaRepository) {}
 
   public async getPersonalInsights(params: { agentId?: string; from?: string; to?: string }) {
-    const { agentId, from, to } = params;
+    const { agentId } = params;
+    const from = this.parseDate(params.from, 'from');
+    const to = this.parseDate(params.to, 'to');
     const dateRange =
       from || to
         ? {
-            ...(from ? { gte: new Date(from) } : {}),
-            ...(to ? { lte: new Date(to) } : {}),
+            ...(from ? { gte: from } : {}),
+            ...(to ? { lte: to } : {}),
           }
         : undefined;
+    const byAgent = agentId ? { assignedAgentId: agentId } : {};
 
     const [
       dialogosVigentes,
@@ -29,33 +38,33 @@ export class InsightsService {
       tareas,
     ] = await Promise.all([
       this.prisma.chat.count({
-        where: { status: { not: 'resolved' }, ...(agentId ? { assignedAgentId: agentId } : {}) },
+        where: { status: { not: 'resolved' }, ...byAgent },
       }),
       this.prisma.chat.count({
-        where: { status: 'pending', ...(agentId ? { assignedAgentId: agentId } : {}) },
+        where: { status: 'pending', ...byAgent },
       }),
       this.prisma.lead.aggregate({
-        where: { stage: 'matriculado', ...(agentId ? { assignedAgentId: agentId } : {}) },
+        where: { ...this.reachedStageWhere(LeadStage.matriculado, dateRange), ...byAgent },
         _count: true,
         _sum: { budgetAmount: true },
       }),
       this.prisma.lead.aggregate({
         where: {
-          stage: { notIn: ['matriculado', 'venta_perdida'] },
-          ...(agentId ? { assignedAgentId: agentId } : {}),
+          stage: { notIn: [LeadStage.matriculado, LeadStage.venta_perdida] },
+          ...byAgent,
         },
         _count: true,
         _sum: { budgetAmount: true },
       }),
       this.prisma.lead.count({
-        where: { stage: 'venta_perdida', ...(agentId ? { assignedAgentId: agentId } : {}) },
+        where: { ...this.reachedStageWhere(LeadStage.venta_perdida, dateRange), ...byAgent },
       }),
       this.prisma.lead.count({
-        where: { hasPendingTasks: false, ...(agentId ? { assignedAgentId: agentId } : {}) },
+        where: { hasPendingTasks: false, ...byAgent },
       }),
       this.prisma.lead.groupBy({
         by: ['source'],
-        where: agentId ? { assignedAgentId: agentId } : undefined,
+        where: { ...byAgent, ...(dateRange ? { createdAt: dateRange } : {}) },
         _count: true,
       }),
       this.prisma.calendarEvent.count({
@@ -73,5 +82,40 @@ export class InsightsService {
       fuentes: Object.fromEntries(fuentes.map((f) => [f.source, f._count])),
       tareas: { count: tareas },
     };
+  }
+
+  // Lead que hoy esta en `stage` y llego a ella dentro del rango. La fecha
+  // sale del LeadActivity 'etapa' que la registro; los leads sin ningun
+  // registro de etapa (anteriores a LYD-93, o creados directo en esa etapa)
+  // caen a updatedAt como aproximacion.
+  private reachedStageWhere(stage: LeadStage, dateRange?: Prisma.DateTimeFilter): Prisma.LeadWhereInput {
+    if (!dateRange) return { stage };
+    return {
+      stage,
+      OR: [
+        {
+          LeadActivity: {
+            some: {
+              type: LeadActivityType.etapa,
+              createdAt: dateRange,
+              meta: { path: ['to'], equals: stage },
+            },
+          },
+        },
+        {
+          LeadActivity: { none: { type: LeadActivityType.etapa } },
+          updatedAt: dateRange,
+        },
+      ],
+    };
+  }
+
+  private parseDate(value: string | undefined, name: string): Date | undefined {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(`Invalid "${name}" date`);
+    }
+    return date;
   }
 }

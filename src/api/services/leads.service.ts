@@ -1,6 +1,6 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
-import { LeadStage, Prisma } from '@prisma/client';
+import { LeadActivityType, LeadStage, Prisma } from '@prisma/client';
 
 // No hay secuencia nativa para un id de texto (cuid) -- generamos el
 // consecutivo dentro de la misma transaccion que el insert para evitar que dos
@@ -155,7 +155,7 @@ export class LeadsService {
       chatId?: string | null;
     },
   ) {
-    await this.assertLeadExists(id);
+    const current = await this.assertLeadExists(id);
     this.assertValidStage(data.stage);
 
     if (data.assignedAgentId) {
@@ -165,10 +165,27 @@ export class LeadsService {
       }
     }
 
-    return this.prisma.lead.update({
-      where: { id },
-      data,
-      include: { Agent: true, Chat: true },
+    // LYD-93: el cambio de etapa queda en LeadActivity para que el dashboard
+    // pueda contar leads ganados/perdidos por periodo (cuando paso, no solo
+    // en que etapa esta hoy). Mismo formato de meta que landing-leads.
+    const stageChanged = data.stage !== undefined && data.stage !== current.stage;
+    return this.prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.update({
+        where: { id },
+        data,
+        include: { Agent: true, Chat: true },
+      });
+      if (stageChanged) {
+        await tx.leadActivity.create({
+          data: {
+            leadId: id,
+            agentId: lead.assignedAgentId,
+            type: LeadActivityType.etapa,
+            meta: { from: current.stage, to: data.stage },
+          },
+        });
+      }
+      return lead;
     });
   }
 
