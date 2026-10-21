@@ -177,6 +177,14 @@ services:
       WA_BUSINESS_VERSION: ${WA_BUSINESS_VERSION:-v23.0}
       WA_BUSINESS_LANGUAGE: ${WA_BUSINESS_LANGUAGE:-es}
 
+      # LYD-95: canal TikTok. Sin APP_SECRET el webhook /webhooks/tiktok rechaza todo; sin clave de cifrado
+      # no se pueden guardar tokens. El redirect post-autorizacion vuelve al front.
+      TIKTOK_APP_ID: ${TIKTOK_APP_ID:-}
+      TIKTOK_APP_SECRET: ${TIKTOK_APP_SECRET:-}
+      TIKTOK_API_VERSION: ${TIKTOK_API_VERSION:-v1.3}
+      TIKTOK_TOKEN_ENCRYPTION_KEY: ${TIKTOK_TOKEN_ENCRYPTION_KEY:-}
+      TIKTOK_POST_AUTH_REDIRECT: https://${FRONTEND_DOMAIN:-crm.brittanygroup.edu.pe}/comunicaciones/canales
+
       # Token de la landing para POST /public/landing-leads (header x-landing-token). Sin valor: 503.
       LANDING_WEBHOOK_TOKEN: ${LANDING_WEBHOOK_TOKEN:-}
 

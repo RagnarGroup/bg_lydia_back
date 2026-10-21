@@ -195,6 +195,17 @@ export type WaBusiness = {
   LANGUAGE: string;
 };
 
+// LYD-95: canal TikTok (Business Messaging API). APP_ID/APP_SECRET son los de la app de TikTok for Business;
+// TOKEN_ENCRYPTION_KEY cifra (AES-256-GCM) los access/refresh token guardados en la base.
+export type Tiktok = {
+  APP_ID: string;
+  APP_SECRET: string;
+  API_VERSION: string;
+  API_URL: string;
+  TOKEN_ENCRYPTION_KEY: string;
+  POST_AUTH_REDIRECT: string;
+};
+
 export type EventsWebhook = {
   APPLICATION_STARTUP: boolean;
   INSTANCE_CREATE: boolean;
@@ -404,6 +415,7 @@ export interface Env {
   KAFKA: Kafka;
   WEBSOCKET: Websocket;
   WA_BUSINESS: WaBusiness;
+  TIKTOK: Tiktok;
   LOG: Log;
   DEL_INSTANCE: DelInstance;
   DEL_TEMP_INSTANCES: boolean;
@@ -731,6 +743,14 @@ export class ConfigService {
         URL: process.env.WA_BUSINESS_URL || 'https://graph.facebook.com',
         VERSION: process.env.WA_BUSINESS_VERSION || 'v18.0',
         LANGUAGE: process.env.WA_BUSINESS_LANGUAGE || 'en',
+      },
+      TIKTOK: {
+        APP_ID: process.env.TIKTOK_APP_ID || '',
+        APP_SECRET: process.env.TIKTOK_APP_SECRET || '',
+        API_VERSION: process.env.TIKTOK_API_VERSION || 'v1.3',
+        API_URL: process.env.TIKTOK_API_URL || 'https://business-api.tiktok.com/open_api',
+        TOKEN_ENCRYPTION_KEY: process.env.TIKTOK_TOKEN_ENCRYPTION_KEY || '',
+        POST_AUTH_REDIRECT: process.env.TIKTOK_POST_AUTH_REDIRECT || '',
       },
       LOG: {
         LEVEL:

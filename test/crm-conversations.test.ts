@@ -48,7 +48,8 @@ describe('cursor', () => {
 describe('parseChannel', () => {
   it('acepta solo los canales conocidos', () => {
     assert.equal(parseChannel('instagram'), 'instagram');
-    assert.equal(parseChannel('tiktok'), undefined);
+    assert.equal(parseChannel('tiktok'), 'tiktok');
+    assert.equal(parseChannel('telegram'), undefined);
     assert.equal(parseChannel(undefined), undefined);
   });
 });

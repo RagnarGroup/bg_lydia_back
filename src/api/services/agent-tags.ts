@@ -56,3 +56,10 @@ export function mergeAiTags(current: AgentTags, proposed: unknown): AgentTags {
 export function readAgentTags(stored: unknown): AgentTags {
   return applyTagPatch({}, stored);
 }
+
+// LYD-95: fija la fuente de un canal que ya la implica (ej. TikTok) solo si la conversacion todavia no tiene una;
+// devuelve null cuando no hay nada que cambiar (para no escribir de mas).
+export function withDefaultSource(current: AgentTags, source: (typeof AGENT_TAG_OPTIONS.fuente)[number]) {
+  if (current.fuente) return null;
+  return { ...current, fuente: source } as AgentTags;
+}

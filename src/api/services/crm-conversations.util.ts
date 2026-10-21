@@ -7,11 +7,11 @@ export const LIST_MAX_LIMIT = 100;
 // Canales tal como los nombra el front (InboxChannel). WhatsApp agrupa todas
 // las integraciones que no son Messenger ni Instagram (Baileys, Cloud API...),
 // igual que channelFromIntegration en lydia_bg_front.
-export const NON_WHATSAPP_INTEGRATIONS = ['FACEBOOK-MESSENGER', 'INSTAGRAM'] as const;
-export type ConversationChannel = 'whatsapp' | 'messenger' | 'instagram';
+export const NON_WHATSAPP_INTEGRATIONS = ['FACEBOOK-MESSENGER', 'INSTAGRAM', 'TIKTOK'] as const;
+export type ConversationChannel = 'whatsapp' | 'messenger' | 'instagram' | 'tiktok';
 
 export function parseChannel(raw: unknown): ConversationChannel | undefined {
-  return raw === 'whatsapp' || raw === 'messenger' || raw === 'instagram' ? raw : undefined;
+  return raw === 'whatsapp' || raw === 'messenger' || raw === 'instagram' || raw === 'tiktok' ? raw : undefined;
 }
 
 // undefined = sin paginar (array completo, como antes de LYD-79).

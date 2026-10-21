@@ -167,6 +167,7 @@ model Instance {
   EvoaiSetting            EvoaiSetting?
   WelcomeMessageConfig    WelcomeMessageConfig?
   BotFlow                 BotFlow?
+  TiktokChannel           TiktokChannel?
 }
 
 model Session {
@@ -1069,4 +1070,33 @@ model EvoaiSetting {
   evoaiIdFallback String?   @db.VarChar(100)
   Instance        Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
   instanceId      String    @unique
+}
+
+// LYD-95: credenciales OAuth del canal TikTok (una por instancia). Los tokens se guardan cifrados
+// (AES-256-GCM, ver tiktok.crypto.ts); `status` pasa a 'reauth_required' si el refresh token vencio.
+model TiktokChannel {
+  id                    String   @id @default(cuid())
+  instanceId            String   @unique
+  businessId            String   @unique @db.VarChar(100)
+  username              String?  @db.VarChar(100)
+  displayName           String?  @db.VarChar(100)
+  scope                 String?  @db.Text
+  accessTokenEnc        String   @db.Text
+  refreshTokenEnc       String   @db.Text
+  accessTokenExpiresAt  DateTime @db.Timestamp
+  refreshTokenExpiresAt DateTime @db.Timestamp
+  status                String   @default("connected") @db.VarChar(20)
+  createdAt             DateTime @default(now()) @db.Timestamp
+  updatedAt             DateTime @updatedAt @db.Timestamp
+  Instance              Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+}
+
+// LYD-95: token del anunciante (Ads) autorizado por /tiktok/advertiser/callback. No se usa para DMs.
+model TiktokAdvertiser {
+  id             String   @id @default(cuid())
+  advertiserIds  Json     @db.JsonB
+  scope          Json?    @db.JsonB
+  accessTokenEnc String   @db.Text
+  createdAt      DateTime @default(now()) @db.Timestamp
+  updatedAt      DateTime @updatedAt @db.Timestamp
 }
