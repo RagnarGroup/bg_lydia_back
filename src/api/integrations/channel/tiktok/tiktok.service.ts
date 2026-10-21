@@ -250,6 +250,7 @@ export class TiktokStartupService extends ChannelStartupService {
 
     await this.saveMessage(messageRaw, storedMedia);
     await this.touchChat(remoteJid, messageRaw.pushName);
+    // TODO(LYD-96): al unir con la rama de atribucion, llamar aca a attributeInboundMessage(prisma, instanceId, remoteJid, { platform: 'tiktok', text }).
     if (!fromMe) await this.tagSource(remoteJid);
   }
 
