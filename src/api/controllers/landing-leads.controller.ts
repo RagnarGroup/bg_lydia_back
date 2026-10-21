@@ -1,10 +1,10 @@
-import { LandingLeadCreateBody, LandingLeadsService } from '@api/services/landing-leads.service';
+import { LandingConsultaBody, LandingLeadCreateBody, LandingLeadsService } from '@api/services/landing-leads.service';
 
 // LYD-83
 export class LandingLeadsController {
   constructor(private readonly landingLeadsService: LandingLeadsService) {}
 
-  public createFromLanding(body: LandingLeadCreateBody) {
+  public createFromLanding(body: LandingLeadCreateBody | LandingConsultaBody) {
     return this.landingLeadsService.createFromLanding(body);
   }
 

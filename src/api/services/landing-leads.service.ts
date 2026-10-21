@@ -5,9 +5,11 @@ import { LeadActivityType, LeadStage, LeadVisitStatus, Prisma } from '@prisma/cl
 import {
   LANDING_DEFAULT_TAG,
   LANDING_PROGRAMAS,
+  LANDING_PROGRAMAS_CONSULTA,
   LANDING_SEDE_CIUDAD,
   LANDING_SEDES,
   LANDING_SOURCE,
+  LANDING_TIPO_CONSULTA,
   LANDING_TZ_OFFSET,
   LandingSede,
 } from './landing-leads.constants';
@@ -64,13 +66,42 @@ export type LandingLeadCreateBody = {
   attribution?: Record<string, unknown>;
 };
 
+// LYD-100: consulta sin visita (tipo: "consulta"). Sin sede, fecha ni hora;
+// el correo es obligatorio porque es lo que identifica a la persona.
+export type LandingConsultaBody = {
+  tipo: 'consulta';
+  externalId?: string;
+  programa: string;
+  nombre: string;
+  correo: string;
+  whatsapp?: string;
+  pageUrl?: string;
+  tags?: string[];
+  attribution?: Record<string, unknown>;
+  // Datos propios de la consulta: se guardan legibles en observations y
+  // estructurados en el historial (LeadActivity.meta.detalle).
+  detalle?: { opcion?: string; precio?: string; mesInicio?: string; pais?: string; nivel?: string };
+};
+
+// Orden y etiqueta de cada dato de la consulta en las observaciones del lead.
+const DETALLE_FIELDS: [keyof NonNullable<LandingConsultaBody['detalle']>, string, number][] = [
+  ['opcion', 'Opción', 80],
+  ['precio', 'Precio', 30],
+  ['mesInicio', 'Mes de inicio', 30],
+  ['pais', 'País', 80],
+  ['nivel', 'Nivel de español', 30],
+];
+
 export class LandingLeadsService {
   constructor(private readonly prisma: PrismaRepository) {}
 
   // ---------- Publico ----------
 
-  public async createFromLanding(body: LandingLeadCreateBody) {
-    const input = this.validateCreateBody(body);
+  public async createFromLanding(body: LandingLeadCreateBody | LandingConsultaBody) {
+    if (body && typeof body === 'object' && (body as { tipo?: unknown }).tipo === LANDING_TIPO_CONSULTA) {
+      return this.createConsulta(body as LandingConsultaBody);
+    }
+    const input = this.validateCreateBody(body as LandingLeadCreateBody);
 
     if (input.externalId) {
       const existing = await this.prisma.lead.findUnique({
@@ -136,6 +167,118 @@ export class LandingLeadsService {
     }
   }
 
+  // LYD-100: una persona = un lead por programa. Si el mismo email vuelve a
+  // consultar el mismo programa, no se crea otro lead: se registra la nueva
+  // consulta en el historial del que ya existe y se actualizan sus datos.
+  // La atribución del lead se queda con la del primer contacto (first-touch);
+  // la de cada consulta nueva queda en el historial.
+  private async createConsulta(body: LandingConsultaBody) {
+    const input = this.validateConsultaBody(body);
+
+    if (input.externalId) {
+      // Reintento de un envío que ya creó el lead...
+      const byLead = await this.prisma.lead.findUnique({
+        where: { externalId: input.externalId },
+        select: { id: true, leadNumber: true },
+      });
+      if (byLead) return { created: false as const, id: byLead.id, leadNumber: byLead.leadNumber };
+      // ...o que ya se registró como consulta repetida sobre otro lead.
+      const byActivity = await this.prisma.leadActivity.findFirst({
+        where: { type: LeadActivityType.consulta, meta: { path: ['externalId'], equals: input.externalId } },
+        select: { Lead: { select: { id: true, leadNumber: true } } },
+      });
+      if (byActivity?.Lead) {
+        return { created: false as const, id: byActivity.Lead.id, leadNumber: byActivity.Lead.leadNumber };
+      }
+    }
+
+    const existing = await this.prisma.lead.findFirst({
+      where: {
+        source: LANDING_SOURCE,
+        programa: input.programa,
+        email: { equals: input.correo, mode: 'insensitive' },
+      },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, leadNumber: true, tags: true, phone: true },
+    });
+
+    if (existing) {
+      await this.prisma.$transaction(async (tx) => {
+        await tx.lead.update({
+          where: { id: existing.id },
+          data: {
+            tags: [...new Set([...existing.tags, ...input.tags])],
+            observations: input.observations,
+            ...(input.whatsapp && !existing.phone ? { phone: input.whatsapp } : {}),
+          },
+        });
+        await tx.leadActivity.create({
+          data: {
+            leadId: existing.id,
+            type: LeadActivityType.consulta,
+            meta: {
+              origen: 'landing',
+              tipo: LANDING_TIPO_CONSULTA,
+              ...(input.externalId ? { externalId: input.externalId } : {}),
+              ...(input.detalle ? { detalle: input.detalle } : {}),
+              ...(input.attribution ? { attribution: input.attribution } : {}),
+            },
+          },
+        });
+      });
+      return { created: false as const, id: existing.id, leadNumber: existing.leadNumber };
+    }
+
+    try {
+      const lead = await this.prisma.$transaction(async (tx) => {
+        const leadNumber = await nextLeadNumber(tx);
+        const created = await tx.lead.create({
+          data: {
+            leadNumber,
+            source: LANDING_SOURCE,
+            contactName: input.nombre,
+            phone: input.whatsapp ?? null,
+            email: input.correo,
+            stage: LeadStage.contacto_inicial,
+            sede: null,
+            programa: input.programa,
+            visitAt: null,
+            visitStatus: null,
+            externalId: input.externalId,
+            assignedAgentId: null,
+            observations: input.observations,
+            tags: input.tags,
+            ...(input.attribution ? { attribution: input.attribution } : {}),
+          },
+          select: { id: true, leadNumber: true },
+        });
+        await tx.leadActivity.create({
+          data: {
+            leadId: created.id,
+            type: LeadActivityType.creado,
+            meta: {
+              origen: 'landing',
+              tipo: LANDING_TIPO_CONSULTA,
+              tags: input.tags,
+              ...(input.detalle ? { detalle: input.detalle } : {}),
+            },
+          },
+        });
+        return created;
+      });
+      return { created: true as const, id: lead.id, leadNumber: lead.leadNumber };
+    } catch (err) {
+      if (input.externalId && err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const again = await this.prisma.lead.findUnique({
+          where: { externalId: input.externalId },
+          select: { id: true, leadNumber: true },
+        });
+        if (again) return { created: false as const, id: again.id, leadNumber: again.leadNumber };
+      }
+      throw err;
+    }
+  }
+
   // ---------- CRM ----------
 
   public async list(params: {
@@ -147,9 +290,14 @@ export class LandingLeadsService {
     search?: string;
     programa?: string;
     tag?: string;
+    // LYD-100: "visita" (leads con visita a sede) o "consulta" (sin visita).
+    tipo?: string;
   }) {
-    const { sede, visitStatus, from, to, unclaimed, search, programa, tag } = params;
+    const { sede, visitStatus, from, to, unclaimed, search, programa, tag, tipo } = params;
     if (visitStatus) this.assertVisitStatus(visitStatus);
+    if (tipo !== undefined && tipo !== 'visita' && tipo !== LANDING_TIPO_CONSULTA) {
+      throw new BadRequestException('tipo must be one of: visita, consulta');
+    }
 
     const visitAt: Prisma.DateTimeNullableFilter = {};
     if (from) visitAt.gte = this.parseRangeDate(from, 'from', false);
@@ -160,20 +308,28 @@ export class LandingLeadsService {
     if (programa) where.programa = programa;
     if (tag) where.tags = { has: tag };
     if (visitStatus) where.visitStatus = visitStatus as LeadVisitStatus;
+    if (tipo === LANDING_TIPO_CONSULTA) where.visitStatus = null;
+    if (tipo === 'visita' && !visitStatus) where.visitStatus = { not: null };
     if (visitAt.gte || visitAt.lte) where.visitAt = visitAt;
+    const and: Prisma.LeadWhereInput[] = [];
     if (unclaimed === 'true') {
-      // Misma definicion que /summary, para que el contador y la lista coincidan.
+      // Misma definicion que /summary, para que el contador y la lista coincidan:
+      // visitas pendientes de atender y consultas (LYD-100) sin agente.
       where.assignedAgentId = null;
-      if (!visitStatus) where.visitStatus = { in: UNCLAIMED_STATUSES };
+      if (!visitStatus && tipo !== LANDING_TIPO_CONSULTA) and.push(this.unclaimedVisitFilter());
     }
     const term = search?.trim();
     if (term) {
-      where.OR = [
-        { contactName: { contains: term, mode: 'insensitive' } },
-        { phone: { contains: term, mode: 'insensitive' } },
-        { leadNumber: { contains: term, mode: 'insensitive' } },
-      ];
+      and.push({
+        OR: [
+          { contactName: { contains: term, mode: 'insensitive' } },
+          { phone: { contains: term, mode: 'insensitive' } },
+          { email: { contains: term, mode: 'insensitive' } },
+          { leadNumber: { contains: term, mode: 'insensitive' } },
+        ],
+      });
     }
+    if (and.length) where.AND = and;
 
     const leads = await this.prisma.lead.findMany({
       where,
@@ -191,12 +347,15 @@ export class LandingLeadsService {
     const unclaimedWhere: Prisma.LeadWhereInput = {
       source: LANDING_SOURCE,
       assignedAgentId: null,
-      visitStatus: { in: UNCLAIMED_STATUSES },
+      ...this.unclaimedVisitFilter(),
     };
-    const [totals, unclaimedBySede, unclaimed] = await Promise.all([
+    const consultaWhere: Prisma.LeadWhereInput = { source: LANDING_SOURCE, visitStatus: null };
+    const [totals, unclaimedBySede, unclaimed, consultasTotal, consultasUnclaimed] = await Promise.all([
       this.prisma.lead.groupBy({ by: ['sede'], where: { source: LANDING_SOURCE }, _count: { _all: true } }),
       this.prisma.lead.groupBy({ by: ['sede'], where: unclaimedWhere, _count: { _all: true } }),
       this.prisma.lead.count({ where: unclaimedWhere }),
+      this.prisma.lead.count({ where: consultaWhere }),
+      this.prisma.lead.count({ where: { ...consultaWhere, assignedAgentId: null } }),
     ]);
 
     const bySede: Record<string, { unclaimed: number; total: number }> = {};
@@ -209,7 +368,8 @@ export class LandingLeadsService {
       if (!u.sede) continue;
       (bySede[u.sede] ??= { unclaimed: 0, total: 0 }).unclaimed = u._count._all;
     }
-    return { unclaimed, bySede };
+    // Las consultas (LYD-100) no tienen sede: van aparte, y "unclaimed" las incluye.
+    return { unclaimed, bySede, consultas: { unclaimed: consultasUnclaimed, total: consultasTotal } };
   }
 
   public async getDetail(id: string) {
@@ -310,6 +470,9 @@ export class LandingLeadsService {
 
     await this.prisma.$transaction(async (tx) => {
       const lead = await this.requireLandingLead(tx, id);
+      if (!lead.visitStatus) {
+        throw new BadRequestException('Este lead es una consulta sin visita a sede: no tiene visita que cambiar');
+      }
 
       if (!lead.assignedAgentId) {
         await tx.lead.update({ where: { id }, data: { assignedAgentId: agent.id } });
@@ -418,6 +581,8 @@ export class LandingLeadsService {
       sede: l.sede,
       ciudad: l.sede ? ((LANDING_SEDE_CIUDAD as Record<string, string>)[l.sede] ?? null) : null,
       programa: l.programa,
+      // LYD-100: las consultas no tienen visita (visitStatus null).
+      tipo: l.visitStatus ? 'visita' : LANDING_TIPO_CONSULTA,
       tags: l.tags,
       visitAt: l.visitAt ? l.visitAt.toISOString() : null,
       visitStatus: l.visitStatus,
@@ -427,6 +592,12 @@ export class LandingLeadsService {
       updatedAt: l.updatedAt,
       lastActivityAt: l.LeadActivity[0]?.createdAt ?? l.updatedAt,
     };
+  }
+
+  // Sin agente y pendiente de atender: visita solicitada o reprogramada, o
+  // consulta sin visita (LYD-100).
+  private unclaimedVisitFilter(): Prisma.LeadWhereInput {
+    return { OR: [{ visitStatus: { in: UNCLAIMED_STATUSES } }, { visitStatus: null }] };
   }
 
   private async requireLandingLead(db: Pick<Prisma.TransactionClient, 'lead'>, id: string) {
@@ -527,6 +698,44 @@ export class LandingLeadsService {
         .join(' · ') || null;
 
     return { programa, sede, nombre, whatsapp, correo, externalId, pageUrl, visitAt, tags, attribution, observations };
+  }
+
+  private validateConsultaBody(body: LandingConsultaBody) {
+    const programa = this.requiredString(body.programa, 'programa', 30);
+    if (!(LANDING_PROGRAMAS_CONSULTA as readonly string[]).includes(programa)) {
+      throw new BadRequestException(`programa must be one of: ${LANDING_PROGRAMAS_CONSULTA.join(', ')}`);
+    }
+    const nombre = this.requiredString(body.nombre, 'nombre', 100);
+    const correo = this.requiredString(body.correo, 'correo', 255).toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) throw new BadRequestException('correo is not a valid email');
+    const whatsapp = this.optionalText(body.whatsapp, 'whatsapp', 50);
+    const externalId = this.optionalText(body.externalId, 'externalId', 120);
+    const pageUrl = this.optionalText(body.pageUrl, 'pageUrl', 500);
+    const tags = this.optionalTags(body.tags);
+    const attribution = this.optionalAttribution(body.attribution);
+    const detalle = this.optionalDetalle(body.detalle);
+    const observations =
+      [
+        ...DETALLE_FIELDS.map(([key, label]) => (detalle?.[key] ? `${label}: ${detalle[key]}` : null)),
+        pageUrl ? `Origen: ${pageUrl}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || null;
+
+    return { programa, nombre, correo, whatsapp, externalId, tags, attribution, detalle, observations };
+  }
+
+  // Solo los campos conocidos de la consulta, como texto acotado; el resto se ignora.
+  private optionalDetalle(value: unknown): Record<string, string> | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException('detalle must be an object');
+    const src = value as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [key, , max] of DETALLE_FIELDS) {
+      const v = this.optionalText(src[key], `detalle.${key}`, max);
+      if (v) out[key] = v;
+    }
+    return Object.keys(out).length ? out : undefined;
   }
 
   private optionalAge(value: unknown): number | undefined {
