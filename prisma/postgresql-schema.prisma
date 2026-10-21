@@ -104,6 +104,7 @@ enum LeadActivityType {
   reprogramada
   nota
   etapa
+  consulta // LYD-100: nueva consulta (sin visita) de un email que ya era lead
 }
 
 // LYD-9: tipo de evento en el calendario por agente.

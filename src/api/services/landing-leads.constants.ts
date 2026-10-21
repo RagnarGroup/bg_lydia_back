@@ -22,3 +22,8 @@ export const LANDING_DEFAULT_TAG = 'INSCRIPCIONES';
 
 // La landing manda fecha y hora locales de Peru (sin DST, siempre UTC-5).
 export const LANDING_TZ_OFFSET = '-05:00';
+
+// LYD-100: consultas sin visita a sede (landings internacionales, p. ej.
+// Spanish Immersion): se identifican por el email, sin sede ni fecha de visita.
+export const LANDING_TIPO_CONSULTA = 'consulta';
+export const LANDING_PROGRAMAS_CONSULTA = ['Spanish Immersion'] as const;
