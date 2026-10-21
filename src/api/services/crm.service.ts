@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@exceptions';
 import { AgentRole, ChatStatus, Prisma } from '@prisma/client';
 import { status as messageStatus } from '@utils/renderStatus';
 
-import { applyTagPatch, readAgentTags } from './agent-tags';
+import { AGENT_TAG_OPTIONS, applyTagPatch, readAgentTags } from './agent-tags';
 import {
   ConversationChannel,
   decodeCursor,
@@ -89,6 +89,9 @@ export class CrmService {
     assignedAgentId?: string;
     channel?: ConversationChannel;
     q?: string;
+    // LYD-96: etiqueta comercial `fuente` y campana/anuncio (Chat.attribution.campaign).
+    source?: string;
+    campaign?: string;
     limit?: number;
     cursor?: string;
   }) {
@@ -115,6 +118,10 @@ export class CrmService {
     if (channel === 'whatsapp') {
       conditions.push(Prisma.sql`i."integration" NOT IN (${Prisma.join([...NON_WHATSAPP_INTEGRATIONS])})`);
     }
+    const source = AGENT_TAG_OPTIONS.fuente.find((option) => option === params.source);
+    if (source) conditions.push(Prisma.sql`c."agentTags"->>'fuente' = ${source}`);
+    const campaign = params.campaign?.trim();
+    if (campaign) conditions.push(Prisma.sql`c."attribution"->>'campaign' = ${campaign}`);
     const term = params.q?.trim();
     if (term) {
       const pattern = `%${escapeLike(term)}%`;
@@ -149,6 +156,24 @@ export class CrmService {
     const nextCursor =
       rows.length > limit && last ? encodeCursor({ sortKey: Number(last.sortKey), id: last.id }) : null;
     return { conversations, nextCursor };
+  }
+
+  // LYD-96: campanas/anuncios con conversaciones, para el filtro del inbox.
+  public async listCampaigns() {
+    const rows = await this.prisma.$queryRaw<
+      { campaign: string; source: string; headline: string | null; platform: string | null; total: number }[]
+    >`
+      SELECT c."attribution"->>'campaign' AS campaign,
+             MIN(c."attribution"->>'source') AS source,
+             MAX(c."attribution"->>'headline') AS headline,
+             MIN(c."attribution"->>'platform') AS platform,
+             COUNT(*)::int AS total
+      FROM "Chat" c
+      WHERE c."archived" = false AND c."attribution"->>'campaign' IS NOT NULL
+      GROUP BY c."attribution"->>'campaign'
+      ORDER BY total DESC, campaign ASC
+    `;
+    return rows;
   }
 
   // Arma cada conversacion con su agente, instancia, contacto y ultimo

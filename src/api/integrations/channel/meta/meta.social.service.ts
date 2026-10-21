@@ -3,6 +3,8 @@ import { PrismaRepository } from '@api/repository/repository.service';
 import { chatbotController } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
+import { attributeInboundMessage } from '@api/services/lead-attribution.service';
+import { messageText, socialReferralAttribution } from '@api/services/lead-attribution.util';
 import { Events, Integration, wa } from '@api/types/wa.types';
 import { ConfigService, WaBusiness } from '@config/env.config';
 import { BadRequestException } from '@exceptions';
@@ -143,11 +145,28 @@ export class MetaSocialStartupService extends ChannelStartupService {
     }
   }
 
+  // LYD-96: `referral` de un anuncio puede llegar suelto (hilo ya abierto), dentro de un postback (boton
+  // "Empezar") o dentro del propio message. Se guarda el origen del lead en el Chat; el mensaje, si lo hay,
+  // sigue su curso normal.
+  private async handleReferral(event: any) {
+    if (event.message?.is_echo || !event.sender?.id) return;
+    const referral = event.referral ?? event.postback?.referral ?? event.message?.referral;
+    const attribution = socialReferralAttribution(referral, this.isInstagram ? 'instagram' : 'messenger');
+    if (!attribution) return;
+
+    await attributeInboundMessage(this.prismaRepository, this.instanceId, this.toJid(`${event.sender.id}`), {
+      platform: attribution.platform,
+      referral: attribution,
+    });
+  }
+
   private async handleMessagingEvent(event: any) {
+    await this.handleReferral(event);
+
     if (event.message) return this.handleMessage(event);
     if (event.read || event.delivery) return this.handleReceipt(event);
 
-    // postbacks, reacciones, referrals, etc.: sin soporte todavia.
+    // postbacks, reacciones, etc.: sin soporte todavia (los referrals ya se leyeron arriba).
     this.logger.log(`Evento de mensajeria ignorado (${Object.keys(event).join(',')})`);
   }
 
@@ -240,6 +259,14 @@ export class MetaSocialStartupService extends ChannelStartupService {
     }
 
     await this.touchChat(remoteJid, pushName);
+
+    // LYD-96: codigo [TT-...] en el primer mensaje entrante (el referral de anuncios ya se guardo antes).
+    if (!fromMe) {
+      await attributeInboundMessage(this.prismaRepository, this.instanceId, remoteJid, {
+        platform: this.isInstagram ? 'instagram' : 'messenger',
+        text: messageText(parts[0]?.message),
+      });
+    }
   }
 
   private async messageExists(id: string) {

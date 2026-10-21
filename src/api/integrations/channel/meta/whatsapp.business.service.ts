@@ -19,6 +19,8 @@ import { PrismaRepository } from '@api/repository/repository.service';
 import { botService, chatbotController } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
+import { attributeInboundMessage } from '@api/services/lead-attribution.service';
+import { messageText, whatsappReferralAttribution } from '@api/services/lead-attribution.util';
 import { Events, wa } from '@api/types/wa.types';
 import { AudioConverter, Chatwoot, ConfigService, Database, Openai, S3, WaBusiness } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException } from '@exceptions';
@@ -790,6 +792,15 @@ export class BusinessStartupService extends ChannelStartupService {
         });
 
         await this.touchChat(key.remoteJid, pushName);
+
+        // LYD-96: origen del lead -- referral de anuncio click-to-WhatsApp o codigo [TT-...] en el primer mensaje.
+        if (!key.fromMe && message.type !== 'reaction') {
+          await attributeInboundMessage(this.prismaRepository, this.instanceId, key.remoteJid, {
+            platform: 'whatsapp',
+            text: messageText(messageRaw.message),
+            referral: whatsappReferralAttribution(message.referral),
+          });
+        }
 
         // LYD-35: numero sin Chat previo -- candidato a mensaje de
         // bienvenida automatico. Este es el canal WhatsApp real de Brittany

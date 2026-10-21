@@ -25,18 +25,34 @@ export class CrmRouter {
         // LYD-31: instanceName es opcional -- sin el, se listan todos los canales juntos.
         // LYD-79: limit/cursor paginan (respuesta { conversations, nextCursor });
         // sin limit, array completo como antes. channel y q filtran en la base.
-        const { instanceName, status, assignedAgentId, channel, q, limit, cursor } = req.query as {
+        const { instanceName, status, assignedAgentId, channel, q, source, campaign, limit, cursor } = req.query as {
           instanceName?: string;
           status?: ChatStatus;
           assignedAgentId?: string;
           channel?: string;
           q?: string;
+          source?: string;
+          campaign?: string;
           limit?: string;
           cursor?: string;
         };
         return res.json(
-          await crmController.listConversations({ instanceName, status, assignedAgentId, channel, q, limit, cursor }),
+          await crmController.listConversations({
+            instanceName,
+            status,
+            assignedAgentId,
+            channel,
+            q,
+            source,
+            campaign,
+            limit,
+            cursor,
+          }),
         );
+      })
+      // LYD-96: campanas/anuncios para el filtro del inbox (antes de /conversations/:chatId por claridad).
+      .get('/campaigns', async (req, res) => {
+        return res.json(await crmController.listCampaigns());
       })
       // LYD-60: tiene que ir antes de /conversations/:chatId, si no Express
       // toma "search" como un chatId.
