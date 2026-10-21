@@ -957,6 +957,15 @@ export class BusinessStartupService extends ChannelStartupService {
   private convertMessageToRaw(message: any, content: any) {
     let convertMessage: any;
 
+    // LYD-97: el archivo ya esta subido a Meta y se vuelve a bajar por `id`
+    // (getBase64FromMediaMessage); guardar el base64 en el Message solo
+    // inflaba cada lectura del hilo con cientos de KB por adjunto.
+    if (message?.mediaType) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { media, ...withoutPayload } = message;
+      message = withoutPayload;
+    }
+
     if (message?.conversation) {
       if (content?.context?.message_id) {
         convertMessage = {
