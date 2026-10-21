@@ -3,6 +3,7 @@ import { BadRequestException, InternalServerErrorException, NotFoundException } 
 
 import { AgentKnowledgeService } from './agent-knowledge.service';
 import { AGENT_TAG_OPTIONS, mergeAiTags, readAgentTags } from './agent-tags';
+import { readAttribution } from './lead-attribution.util';
 
 const RECENT_MESSAGES = 20;
 const MAX_MESSAGE_CHARS = 600;
@@ -112,6 +113,8 @@ export class CrmSuggestReplyService {
 
     const parsed = this.parseAgentReply(await this.askCodex(prompt));
     const tags = mergeAiTags(currentTags, parsed.tags);
+    // LYD-96: si la fuente salio de la atribucion (anuncio / codigo TT), la IA no la reemplaza.
+    if (readAttribution(chat.attribution) && currentTags.fuente) tags.fuente = currentTags.fuente;
     if (JSON.stringify(tags) !== JSON.stringify(currentTags)) {
       await this.prisma.chat.update({ where: { id: chatId }, data: { agentTags: tags } });
     }
