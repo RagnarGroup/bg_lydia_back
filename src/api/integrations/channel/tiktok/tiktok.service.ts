@@ -5,6 +5,7 @@ import { chatbotController } from '@api/server.module';
 import { readAgentTags, withDefaultSource } from '@api/services/agent-tags';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
+import { attributeInboundMessage } from '@api/services/lead-attribution.service';
 import { Events, wa } from '@api/types/wa.types';
 import { ConfigService, S3 } from '@config/env.config';
 import { BadRequestException } from '@exceptions';
@@ -250,8 +251,13 @@ export class TiktokStartupService extends ChannelStartupService {
 
     await this.saveMessage(messageRaw, storedMedia);
     await this.touchChat(remoteJid, messageRaw.pushName);
-    // TODO(LYD-96): al unir con la rama de atribucion, llamar aca a attributeInboundMessage(prisma, instanceId, remoteJid, { platform: 'tiktok', text }).
-    if (!fromMe) await this.tagSource(remoteJid);
+    if (!fromMe) {
+      await attributeInboundMessage(this.prismaRepository, this.instanceId, remoteJid, {
+        platform: 'tiktok',
+        text: message.text,
+      });
+      await this.tagSource(remoteJid);
+    }
   }
 
   // Guarda el Message; si la imagen se subio a S3 tambien crea su registro Media (igual que el canal Cloud API).
