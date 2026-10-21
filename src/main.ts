@@ -5,7 +5,7 @@ import '@utils/instrumentSentry';
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
 import { HttpStatus, router } from '@api/routes/index.router';
-import { eventManager, waMonitor } from '@api/server.module';
+import { eventManager, tiktokController, waMonitor } from '@api/server.module';
 import {
   Auth,
   configService,
@@ -65,7 +65,9 @@ async function bootstrap() {
       // La firma X-Hub-Signature-256 de Meta se calcula sobre los bytes exactos del body,
       // no sobre el JSON ya parseado: se conserva el crudo solo para ese webhook.
       verify: (req, _res, buf) => {
-        if ((req as any).url?.startsWith('/webhook/meta')) (req as any).rawBody = buf;
+        // Igual con Tiktok-Signature de TikTok (LYD-95).
+        if ((req as any).url?.startsWith('/webhook/meta') || (req as any).url?.startsWith('/webhooks/tiktok'))
+          (req as any).rawBody = buf;
       },
     }),
     compression(),
@@ -169,6 +171,8 @@ async function bootstrap() {
   initWA().catch((error) => {
     logger.error('Error loading instances: ' + error);
   });
+
+  tiktokController.startTokenKeepAlive();
 
   onUnexpectedError();
 }

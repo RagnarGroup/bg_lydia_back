@@ -11,6 +11,7 @@ import EventEmitter2 from 'eventemitter2';
 import { EvolutionStartupService } from './evolution/evolution.channel.service';
 import { MetaSocialStartupService } from './meta/meta.social.service';
 import { BusinessStartupService } from './meta/whatsapp.business.service';
+import { TiktokStartupService } from './tiktok/tiktok.service';
 import { BaileysStartupService } from './whatsapp/whatsapp.baileys.service';
 
 type ChannelDataType = {
@@ -58,6 +59,16 @@ export class ChannelController {
 
     if (!instanceData.token && (instanceData.integration === Integration.WHATSAPP_BUSINESS || isMetaSocial)) {
       throw new BadRequestException('token is required');
+    }
+
+    if (instanceData.integration === Integration.TIKTOK) {
+      return new TiktokStartupService(
+        data.configService,
+        data.eventEmitter,
+        data.prismaRepository,
+        data.cache,
+        data.chatwootCache,
+      );
     }
 
     if (isMetaSocial) {

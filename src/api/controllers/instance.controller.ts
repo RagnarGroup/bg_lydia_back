@@ -135,6 +135,10 @@ export class InstanceController {
 
       await this.settingsService.create(instanceDto, settings);
 
+      if (instanceData.integration === Integration.TIKTOK && !instanceData.number) {
+        throw new BadRequestException('number is required');
+      }
+
       let webhookWaBusiness = null,
         accessTokenWaBusiness = '';
 

@@ -112,6 +112,7 @@ export class CrmService {
     if (instanceName) conditions.push(Prisma.sql`i."name" = ${instanceName}`);
     if (channel === 'messenger') conditions.push(Prisma.sql`i."integration" = 'FACEBOOK-MESSENGER'`);
     if (channel === 'instagram') conditions.push(Prisma.sql`i."integration" = 'INSTAGRAM'`);
+    if (channel === 'tiktok') conditions.push(Prisma.sql`i."integration" = 'TIKTOK'`);
     if (channel === 'whatsapp') {
       conditions.push(Prisma.sql`i."integration" NOT IN (${Prisma.join([...NON_WHATSAPP_INTEGRATIONS])})`);
     }

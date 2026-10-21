@@ -157,4 +157,6 @@ export const Integration = {
   // LYD-26: canales de Meta distintos de WhatsApp. `number` de la instancia = id de la Pagina / cuenta de Instagram.
   FACEBOOK_MESSENGER: 'FACEBOOK-MESSENGER',
   INSTAGRAM: 'INSTAGRAM',
+  // LYD-95: TikTok Business Messaging. `number` de la instancia = business_id (open_id) de la cuenta.
+  TIKTOK: 'TIKTOK',
 };

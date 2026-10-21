@@ -2,6 +2,7 @@ import { authGuard } from '@api/guards/auth.guard';
 import { instanceExistsGuard, instanceLoggedGuard } from '@api/guards/instance.guard';
 import Telemetry from '@api/guards/telemetry.guard';
 import { ChannelRouter } from '@api/integrations/channel/channel.router';
+import { TiktokRouter } from '@api/integrations/channel/tiktok/tiktok.router';
 import { ChatbotRouter } from '@api/integrations/chatbot/chatbot.router';
 import { EventRouter } from '@api/integrations/event/event.router';
 import { StorageRouter } from '@api/integrations/storage/storage.router';
@@ -254,6 +255,8 @@ router
   .use('/crm/welcome-message', authGuard['apikey'], new WelcomeMessageRouter().router)
   // LYD-83: publico, con token propio (x-landing-token). Antes del ChannelRouter y fuera de /crm.
   .use('/public/landing-leads', new LandingLeadsPublicRouter().router)
+  // LYD-95: canal TikTok. Sin guards de instancia (OAuth y webhook publicos; el resto lleva solo el apikey global).
+  .use('', new TiktokRouter(configService, authGuard['apikey']).router)
   .use('', new ChannelRouter(configService, ...guards).router)
   .use('', new EventRouter(configService, ...guards).router)
   .use('', new ChatbotRouter(...guards).router)
