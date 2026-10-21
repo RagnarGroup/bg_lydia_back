@@ -23,6 +23,8 @@ export class CrmController {
     assignedAgentId?: string;
     channel?: string;
     q?: string;
+    source?: string;
+    campaign?: string;
     limit?: string;
     cursor?: string;
   }) {
@@ -31,6 +33,10 @@ export class CrmController {
       channel: parseChannel(query.channel),
       limit: normalizeListLimit(query.limit),
     });
+  }
+
+  public async listCampaigns() {
+    return this.crmService.listCampaigns();
   }
 
   public async searchMessages(query: { q?: string; instanceName?: string; limit?: string }) {
