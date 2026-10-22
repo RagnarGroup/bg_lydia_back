@@ -74,6 +74,14 @@ enum AgentRole {
   administrador
 }
 
+// LYD-101: quien origino un mensaje saliente (fromMe). Lo enviado desde el
+// celular, fuera de Lydia, no tiene fila en MessageAuthor ("sin atribuir").
+enum MessageAuthorKind {
+  asesora
+  bot
+  bienvenida
+}
+
 // LYD-8: pipeline de ventas de Lydia (leads), antes 100% mock en
 // lydia_bg_front. Etapas fijas del embudo comercial.
 enum LeadStage {
@@ -241,6 +249,8 @@ model Agent {
   color     String?   @db.VarChar(20)
   role      AgentRole @default(asesor)
   active    Boolean   @default(true)
+  // LYD-101: sedes de la asesora, copiadas del SGA (fuente de verdad).
+  sedes     String[]  @default([])
   createdAt DateTime  @default(now()) @db.Timestamp
   updatedAt DateTime  @updatedAt @db.Timestamp
 
@@ -249,6 +259,23 @@ model Agent {
   Lead          Lead[]
   CalendarEvent CalendarEvent[]
   LeadActivity  LeadActivity[]
+  MessageAuthor MessageAuthor[]
+}
+
+// LYD-101: autoria de los mensajes salientes, en tabla propia para no tocar
+// Message (modelo de Evolution, se mantiene igual a upstream). Se cruza con
+// Message por instanceId + key->>'id'.
+model MessageAuthor {
+  id           String            @id @default(cuid())
+  instanceId   String
+  messageKeyId String            @db.VarChar(255)
+  kind         MessageAuthorKind
+  Agent        Agent?            @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  agentId      String?
+  createdAt    DateTime          @default(now()) @db.Timestamp
+
+  @@unique([instanceId, messageKeyId])
+  @@index([agentId, createdAt])
 }
 
 model ConversationNote {

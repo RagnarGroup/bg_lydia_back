@@ -69,6 +69,20 @@ export class CrmService {
     return this.prisma.agent.create({ data });
   }
 
+  // LYD-101: sedes de la asesora, copiadas del SGA (users -> user_sedes).
+  // Reemplaza la lista completa.
+  public async updateAgentSedes(agentId: string, sedes: unknown) {
+    if (!Array.isArray(sedes) || sedes.some((s) => typeof s !== 'string' || !s.trim())) {
+      throw new BadRequestException('sedes debe ser una lista de nombres de sede');
+    }
+    const agent = await this.prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } });
+    if (!agent) {
+      throw new NotFoundException(`Agent ${agentId} not found`);
+    }
+    const unique = [...new Set(sedes.map((s: string) => s.trim()))];
+    return this.prisma.agent.update({ where: { id: agentId }, data: { sedes: unique } });
+  }
+
   // Chat y Contact no tienen relacion FK entre si en el schema de Evolution
   // (ambos son unique por [instanceId, remoteJid] pero independientes) --
   // se cruzan a mano aca en vez de duplicar el contacto en una tabla propia.

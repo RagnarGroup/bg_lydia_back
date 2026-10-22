@@ -58,6 +58,7 @@ import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
 import { LandingLeadsService } from './services/landing-leads.service';
 import { LeadsService } from './services/leads.service';
+import { MessageAuthorService } from './services/message-author.service';
 import { WAMonitoringService } from './services/monitor.service';
 import { ProxyService } from './services/proxy.service';
 import { SettingsService } from './services/settings.service';
@@ -110,7 +111,9 @@ export const settingsController = new SettingsController(settingsService);
 const crmService = new CrmService(prismaRepository);
 const agentKnowledgeService = new AgentKnowledgeService(prismaRepository);
 const suggestReplyService = new CrmSuggestReplyService(prismaRepository, agentKnowledgeService);
-export const crmController = new CrmController(crmService, suggestReplyService);
+// LYD-101: exportado para que los canales registren bot y bienvenida.
+export const messageAuthorService = new MessageAuthorService(prismaRepository);
+export const crmController = new CrmController(crmService, suggestReplyService, messageAuthorService);
 export const agentController = new AgentController(agentKnowledgeService, suggestReplyService);
 
 const leadsService = new LeadsService(prismaRepository);
