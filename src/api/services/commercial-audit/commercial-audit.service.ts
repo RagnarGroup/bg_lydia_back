@@ -49,6 +49,8 @@ interface Candidate {
   attribution: 'exacta' | 'asignada';
   alias: string;
   leadStage: string | null;
+  // LYD-104: sedes de la asesora evaluada, para que la IA no sugiera otra ciudad
+  agentSedes: string[];
   lines: Line[];
   stats: {
     avgResponseMinutes: number | null;
@@ -68,6 +70,18 @@ interface AiEvaluation {
   respuesta_sugerida?: string | null;
   mejor_frase?: string | null;
 }
+
+// LYD-104: ciudad de cada sede del SGA (tabla `sedes`).
+const SEDE_CITY: Record<string, string> = {
+  Lince: 'Lima',
+  Miraflores: 'Lima',
+  Bustamante: 'Arequipa',
+  'Bustamante-Kids': 'Arequipa',
+  Centro: 'Arequipa',
+  Cayma: 'Arequipa',
+  Umacollo: 'Arequipa',
+  Virtual: 'virtual',
+};
 
 const SPEAKER_LABEL: Record<Speaker, string> = {
   cliente: 'Cliente',
@@ -99,6 +113,24 @@ export class CommercialAuditService {
       timezone: TIMEZONE,
     });
     this.logger.info('Auditoria comercial diaria programada: corte 21:00, envio 22:00 (America/Lima)');
+    void this.resumeIfInterrupted().catch((error) => this.logger.error(`No se pudo reanudar la auditoria: ${error}`));
+  }
+
+  // LYD-104: si el proceso se reinicio despues del corte (deploy, caida) y el
+  // reporte de hoy no salio, se vuelve a correr. Al terminar se envia solo si
+  // ya paso la hora de envio; si no, lo manda el cron de las 22:00.
+  private async resumeIfInterrupted(): Promise<void> {
+    const hour = nowInLimaHour();
+    if (hour < CUTOFF_HOUR) return;
+    const reportDate = todayInLima();
+    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate }, select: { status: true } });
+    if (run?.status === 'sent') return;
+    if (run?.status === 'evaluated') {
+      if (hour >= DELIVERY_HOUR) await this.deliverScheduled(reportDate);
+      return;
+    }
+    this.logger.info(`Reanudando la auditoria ${reportDate} (estado: ${run?.status ?? 'sin corrida'})`);
+    this.runInBackground(reportDate, { scheduled: true });
   }
 
   // Corrida manual (piloto, reproceso). No envia: el envio es aparte.
@@ -286,6 +318,9 @@ export class CommercialAuditService {
 
     const candidates: Candidate[] = [];
     let unattributed = 0;
+    const agentSedes = new Map(
+      (await this.prisma.agent.findMany({ select: { id: true, sedes: true } })).map((a) => [a.id, a.sedes]),
+    );
     for (const { instanceId, remoteJid, agents, unknown } of chats.values()) {
       const chat = await this.prisma.chat.findUnique({
         where: { instanceId_remoteJid: { instanceId, remoteJid } },
@@ -340,6 +375,7 @@ export class CommercialAuditService {
           attribution: target.attribution,
           alias: clientAlias(chat.id),
           leadStage: chat.Lead?.stage ?? null,
+          agentSedes: agentSedes.get(target.agentId) ?? [],
           lines,
           stats: executionStats(lines),
         });
@@ -571,7 +607,13 @@ function buildPrompt(batch: Candidate[]): string {
     const transcript = c.lines
       .map((l) => `[${l.inWindow ? 'HOY ' : ''}${formatLima(l.at)}] ${SPEAKER_LABEL[l.speaker]}: ${l.text}`)
       .join('\n');
-    return `### Conversacion ${c.ref}${c.leadStage ? ` (etapa del lead: ${c.leadStage})` : ''}\nDatos de ejecucion: ${stats}\n${transcript}`;
+    const context = [
+      `sede de la asesora: ${describeSedes(c.agentSedes) ?? 'sin dato'}`,
+      c.leadStage ? `etapa del lead: ${c.leadStage}` : '',
+    ]
+      .filter(Boolean)
+      .join('; ');
+    return `### Conversacion ${c.ref} (${context})\nDatos de ejecucion: ${stats}\n${transcript}`;
   });
 
   return [
@@ -585,6 +627,7 @@ function buildPrompt(batch: Candidate[]): string {
       '- aplica=false si la conversacion no es comercial (alumno actual, tramite administrativo, pago de un alumno ya matriculado, proveedor, tema personal) o si la asesora solo envio un mensaje operativo sin oportunidad de venta. En ese caso niveles=null y explica en motivo_no_aplica.',
       '- [nota de voz], [imagen], [video] y [documento] no se pueden ver ni oir: no los premies ni los castigues por su contenido.',
       '- evidencia: cita textual corta (maximo 20 palabras) de la asesora; si el nivel es nulo, di que falto.',
+      '- respuesta_sugerida: si mencionas sede, ciudad, horarios o precios, usa la sede de la asesora evaluada indicada en la conversacion; nunca otra ciudad salvo que el cliente la pida. Si la sede es "sin dato", no menciones ciudad.',
       '- Escribe en espanol. No inventes datos del cliente.',
     ].join('\n'),
     '## Formato de respuesta',
@@ -601,6 +644,11 @@ function parseEvaluations(text: string): AiEvaluation[] {
   const parsed = JSON.parse(text.slice(start, end + 1)) as unknown;
   if (!Array.isArray(parsed)) throw new Error('la IA no devolvio un arreglo JSON');
   return parsed.filter((r): r is AiEvaluation => typeof r?.id === 'string' && typeof r?.aplica === 'boolean');
+}
+
+function describeSedes(sedes: string[]): string | null {
+  if (!sedes.length) return null;
+  return sedes.map((s) => (SEDE_CITY[s] ? `${s} (${SEDE_CITY[s]})` : s)).join(', ');
 }
 
 function todayInLima(): string {
