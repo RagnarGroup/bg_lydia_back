@@ -20,6 +20,7 @@ import { BusinessRouter } from './business.router';
 import { CalendarEventsRouter } from './calendar-events.router';
 import { CallRouter } from './call.router';
 import { ChatRouter } from './chat.router';
+import { CommercialAuditRouter } from './commercial-audit.router';
 import { CrmRouter } from './crm.router';
 import { GroupRouter } from './group.router';
 import { InsightsRouter } from './insights.router';
@@ -253,6 +254,8 @@ router
   .use('/crm/insights', authGuard['apikey'], new InsightsRouter().router)
   .use('/crm/bot', authGuard['apikey'], new BotRouter().router)
   .use('/crm/welcome-message', authGuard['apikey'], new WelcomeMessageRouter().router)
+  // LYD-102: auditoria comercial diaria (piloto, reproceso y reenvio de un dia).
+  .use('/crm/commercial-audit', authGuard['apikey'], new CommercialAuditRouter().router)
   // LYD-83: publico, con token propio (x-landing-token). Antes del ChannelRouter y fuera de /crm.
   .use('/public/landing-leads', new LandingLeadsPublicRouter().router)
   // LYD-95: canal TikTok. Sin guards de instancia (OAuth y webhook publicos; el resto lleva solo el apikey global).

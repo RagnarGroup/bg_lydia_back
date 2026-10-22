@@ -9,6 +9,7 @@ import { BusinessController } from './controllers/business.controller';
 import { CalendarEventsController } from './controllers/calendar-events.controller';
 import { CallController } from './controllers/call.controller';
 import { ChatController } from './controllers/chat.controller';
+import { CommercialAuditController } from './controllers/commercial-audit.controller';
 import { CrmController } from './controllers/crm.controller';
 import { GroupController } from './controllers/group.controller';
 import { InsightsController } from './controllers/insights.controller';
@@ -53,6 +54,8 @@ import { AgentKnowledgeService } from './services/agent-knowledge.service';
 import { BotService } from './services/bot.service';
 import { CacheService } from './services/cache.service';
 import { CalendarEventsService } from './services/calendar-events.service';
+import { AuditMailer } from './services/commercial-audit/audit-mailer';
+import { CommercialAuditService } from './services/commercial-audit/commercial-audit.service';
 import { CrmService } from './services/crm.service';
 import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
@@ -133,6 +136,10 @@ export const insightsController = new InsightsController(insightsService);
 
 export const botService = new BotService(prismaRepository);
 export const botController = new BotController(botService);
+
+// LYD-102: auditoria comercial diaria META K-01 (programada desde main.ts).
+export const commercialAuditService = new CommercialAuditService(prismaRepository, new AuditMailer());
+export const commercialAuditController = new CommercialAuditController(commercialAuditService);
 
 const welcomeMessageService = new WelcomeMessageService(prismaRepository);
 export const welcomeMessageController = new WelcomeMessageController(welcomeMessageService);

@@ -5,7 +5,7 @@ import '@utils/instrumentSentry';
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
 import { HttpStatus, router } from '@api/routes/index.router';
-import { eventManager, tiktokController, waMonitor } from '@api/server.module';
+import { commercialAuditService, eventManager, tiktokController, waMonitor } from '@api/server.module';
 import {
   Auth,
   configService,
@@ -173,6 +173,9 @@ async function bootstrap() {
   });
 
   tiktokController.startTokenKeepAlive();
+
+  // LYD-102: auditoria comercial diaria (20:00 evalua, 21:00 envia; America/Lima).
+  commercialAuditService.schedule();
 
   onUnexpectedError();
 }

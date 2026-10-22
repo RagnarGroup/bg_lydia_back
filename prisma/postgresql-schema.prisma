@@ -260,6 +260,7 @@ model Agent {
   CalendarEvent CalendarEvent[]
   LeadActivity  LeadActivity[]
   MessageAuthor MessageAuthor[]
+  ConversationAudit ConversationAudit[]
 }
 
 // LYD-101: autoria de los mensajes salientes, en tabla propia para no tocar
@@ -1127,4 +1128,56 @@ model TiktokAdvertiser {
   accessTokenEnc String   @db.Text
   createdAt      DateTime @default(now()) @db.Timestamp
   updatedAt      DateTime @updatedAt @db.Timestamp
+}
+
+// LYD-102: auditoria comercial diaria META K-01. Una corrida por dia (hora de
+// Lima); cada corrida evalua las conversaciones donde escribio una asesora en
+// la ventana 20:00 de ayer -> 20:00 de hoy y manda el reporte a las 21:00.
+enum CommercialAuditStatus {
+  running
+  evaluated
+  sent
+  failed
+}
+
+model CommercialAuditRun {
+  id            String                @id @default(cuid())
+  reportDate    String                @unique @db.VarChar(10)
+  windowStart   Int                   @db.Integer
+  windowEnd     Int                   @db.Integer
+  status        CommercialAuditStatus @default(running)
+  conversations Int                   @default(0)
+  unattributed  Int                   @default(0)
+  html          String?               @db.Text
+  error         String?               @db.Text
+  sentAt        DateTime?             @db.Timestamp
+  createdAt     DateTime              @default(now()) @db.Timestamp
+  updatedAt     DateTime              @updatedAt @db.Timestamp
+  Audits        ConversationAudit[]
+}
+
+// Una fila por (conversacion, asesora) evaluada en la corrida. Los puntajes
+// salen de la rubrica K-01 (niveles completo/parcial/nulo); `result` guarda la
+// evidencia y las sugerencias, ya anonimizadas.
+model ConversationAudit {
+  id           String             @id @default(cuid())
+  Run          CommercialAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId        String
+  chatId       String
+  Agent        Agent?             @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  agentId      String?
+  // exacta = MessageAuthor; asignada = mensajes sin autor atribuidos al responsable del chat
+  attribution  String             @db.VarChar(20)
+  applicable   Boolean
+  total        Int?
+  lossAversion Int?
+  cta          Int?
+  diagnostico  Int?
+  valor        Int?
+  ejecucion    Int?
+  result       Json               @db.JsonB
+  createdAt    DateTime           @default(now()) @db.Timestamp
+
+  @@index([runId])
+  @@index([agentId, createdAt])
 }
