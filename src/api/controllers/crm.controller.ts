@@ -29,6 +29,11 @@ export class CrmController {
     return this.messageAuthorService.recordAgentMessage(data);
   }
 
+  // LYD-105
+  public async getMessageDetails(messageId: string) {
+    return this.messageAuthorService.getMessageDetails(messageId);
+  }
+
   public async listConversations(query: {
     instanceName?: string;
     status?: ChatStatus;

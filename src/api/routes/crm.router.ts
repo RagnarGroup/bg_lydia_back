@@ -31,6 +31,10 @@ export class CrmRouter {
         const { instanceName, messageKeyId, agentId } = req.body ?? {};
         return res.status(201).json(await crmController.recordMessageAuthor({ instanceName, messageKeyId, agentId }));
       })
+      // LYD-105: "Ver detalles" de un mensaje (quien lo envio y estado de entrega).
+      .get('/messages/:messageId/details', async (req, res) => {
+        return res.json(await crmController.getMessageDetails(req.params.messageId));
+      })
       .get('/conversations', async (req, res) => {
         // LYD-31: instanceName es opcional -- sin el, se listan todos los canales juntos.
         // LYD-79: limit/cursor paginan (respuesta { conversations, nextCursor });
