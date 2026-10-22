@@ -1,7 +1,7 @@
 # Despliegue — Lydia producción (VPS Brittany)
 
 CRM-10/CRM-11. Infraestructura en el VPS Contabo de Brittany Group
-(`144.91.113.27`, acceso `ssh brittany`). Primer servicio del VPS de
+(`144.126.142.27`, acceso `ssh brittany`). Primer servicio del VPS de
 Brittany que corre sobre Docker (ver INF-105: el resto sigue siendo
 binarios + systemd).
 
@@ -51,6 +51,44 @@ nativo del fork, sin tocar código), y ese conversor es el servicio
 `evolution-api` le habla adentro de `lydia_internal_net`). Se autentica con
 `API_AUDIO_CONVERTER_KEY` (header `apikey`), generada por
 `generate_secrets.sh` igual que el resto de los secretos de este `.env`.
+
+## Auditoría comercial diaria (META K-01)
+
+`evolution-api` evalúa todos los días las conversaciones comerciales de las
+asesoras y manda el reporte por correo (LYD-101 autoría por mensaje, LYD-102
+auditoría). Horario en America/Lima, programado dentro del propio proceso
+(`node-cron`):
+
+- **20:00**: corte y evaluación de la ventana 20:00 de ayer → 20:00 de hoy, por
+  el codex bridge, con los datos del cliente anonimizados.
+- **21:00**: correo a `COMMERCIAL_AUDIT_TO`. Si la evaluación termina más
+  tarde, sale apenas termina.
+- **22:30**: si no salió, alerta a `COMMERCIAL_AUDIT_ALERT_TO`.
+
+Se activa con `COMMERCIAL_AUDIT_ENABLED=true` en `/lydia_prod/.env`; el envío
+necesita `SMTP_USER`/`SMTP_PASS` (contraseña de aplicación de Google
+Workspace). Como `docker-compose.yml` vive en `/lydia_prod/` y el workflow solo
+sincroniza `back/`, las variables nuevas del compose se copian a mano desde
+`back/deploy/lydia-prod/docker-compose.yml`.
+
+Las sedes de cada asesora vienen del SGA (`users` → `user_sedes`, rol
+`asesora`) y se cargan con `PUT /crm/agents/sedes` (`{ agents: [{ email,
+sedes }] }`, cruce por email).
+
+Operación manual (apikey global, contra `127.0.0.1:8091` en el VPS):
+
+```bash
+# evaluar un día sin enviar (piloto / reproceso)
+curl -s -X POST -H "apikey: $KEY" -H 'Content-Type: application/json' \
+  -d '{"date":"2026-10-22"}' http://127.0.0.1:8091/crm/commercial-audit/runs
+# estado y vista previa
+curl -s -H "apikey: $KEY" http://127.0.0.1:8091/crm/commercial-audit/runs/2026-10-22
+curl -s -H "apikey: $KEY" http://127.0.0.1:8091/crm/commercial-audit/runs/2026-10-22/html > reporte.html
+# enviar (con "to" solo a esas direcciones, sin marcarlo como enviado)
+curl -s -X POST -H "apikey: $KEY" -H 'Content-Type: application/json' \
+  -d '{"to":["desarrollo@brittanygroup.edu.pe"]}' \
+  http://127.0.0.1:8091/crm/commercial-audit/runs/2026-10-22/send
+```
 
 ## Desplegar
 
