@@ -9,6 +9,7 @@ import { BusinessController } from './controllers/business.controller';
 import { CalendarEventsController } from './controllers/calendar-events.controller';
 import { CallController } from './controllers/call.controller';
 import { ChatController } from './controllers/chat.controller';
+import { CommercialAuditController } from './controllers/commercial-audit.controller';
 import { CrmController } from './controllers/crm.controller';
 import { GroupController } from './controllers/group.controller';
 import { InsightsController } from './controllers/insights.controller';
@@ -53,11 +54,14 @@ import { AgentKnowledgeService } from './services/agent-knowledge.service';
 import { BotService } from './services/bot.service';
 import { CacheService } from './services/cache.service';
 import { CalendarEventsService } from './services/calendar-events.service';
+import { AuditMailer } from './services/commercial-audit/audit-mailer';
+import { CommercialAuditService } from './services/commercial-audit/commercial-audit.service';
 import { CrmService } from './services/crm.service';
 import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
 import { LandingLeadsService } from './services/landing-leads.service';
 import { LeadsService } from './services/leads.service';
+import { MessageAuthorService } from './services/message-author.service';
 import { WAMonitoringService } from './services/monitor.service';
 import { ProxyService } from './services/proxy.service';
 import { SettingsService } from './services/settings.service';
@@ -110,7 +114,9 @@ export const settingsController = new SettingsController(settingsService);
 const crmService = new CrmService(prismaRepository);
 const agentKnowledgeService = new AgentKnowledgeService(prismaRepository);
 const suggestReplyService = new CrmSuggestReplyService(prismaRepository, agentKnowledgeService);
-export const crmController = new CrmController(crmService, suggestReplyService);
+// LYD-101: exportado para que los canales registren bot y bienvenida.
+export const messageAuthorService = new MessageAuthorService(prismaRepository);
+export const crmController = new CrmController(crmService, suggestReplyService, messageAuthorService);
 export const agentController = new AgentController(agentKnowledgeService, suggestReplyService);
 
 const leadsService = new LeadsService(prismaRepository);
@@ -130,6 +136,10 @@ export const insightsController = new InsightsController(insightsService);
 
 export const botService = new BotService(prismaRepository);
 export const botController = new BotController(botService);
+
+// LYD-102: auditoria comercial diaria META K-01 (programada desde main.ts).
+export const commercialAuditService = new CommercialAuditService(prismaRepository, new AuditMailer());
+export const commercialAuditController = new CommercialAuditController(commercialAuditService);
 
 const welcomeMessageService = new WelcomeMessageService(prismaRepository);
 export const welcomeMessageController = new WelcomeMessageController(welcomeMessageService);

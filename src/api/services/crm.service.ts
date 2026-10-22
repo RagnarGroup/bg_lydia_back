@@ -69,6 +69,43 @@ export class CrmService {
     return this.prisma.agent.create({ data });
   }
 
+  // LYD-101: sedes de las asesoras, copiadas del SGA (users -> user_sedes).
+  // Se cruza por email (el mismo de Google con el que entran a Lydia y al SGA)
+  // y reemplaza la lista completa de cada agente encontrado.
+  public async syncAgentSedes(agents: unknown) {
+    const valid =
+      Array.isArray(agents) &&
+      agents.every(
+        (a) =>
+          typeof a?.email === 'string' &&
+          a.email.trim() &&
+          Array.isArray(a.sedes) &&
+          a.sedes.every((s: unknown) => typeof s === 'string' && s.trim()),
+      );
+    if (!valid) {
+      throw new BadRequestException('agents debe ser una lista de { email, sedes: string[] }');
+    }
+
+    const updated: string[] = [];
+    const notFound: string[] = [];
+    for (const { email, sedes } of agents as { email: string; sedes: string[] }[]) {
+      const agent = await this.prisma.agent.findFirst({
+        where: { email: { equals: email.trim(), mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (!agent) {
+        notFound.push(email);
+        continue;
+      }
+      await this.prisma.agent.update({
+        where: { id: agent.id },
+        data: { sedes: [...new Set(sedes.map((s) => s.trim()))] },
+      });
+      updated.push(email);
+    }
+    return { updated, notFound };
+  }
+
   // Chat y Contact no tienen relacion FK entre si en el schema de Evolution
   // (ambos son unique por [instanceId, remoteJid] pero independientes) --
   // se cruzan a mano aca en vez de duplicar el contacto en una tabla propia.

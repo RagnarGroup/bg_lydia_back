@@ -1,12 +1,14 @@
 import { CrmService } from '@api/services/crm.service';
 import { normalizeListLimit, parseChannel } from '@api/services/crm-conversations.util';
 import { CrmSuggestReplyService } from '@api/services/crm-suggest-reply.service';
+import { MessageAuthorService } from '@api/services/message-author.service';
 import { AgentRole, ChatStatus } from '@prisma/client';
 
 export class CrmController {
   constructor(
     private readonly crmService: CrmService,
     private readonly suggestReplyService: CrmSuggestReplyService,
+    private readonly messageAuthorService: MessageAuthorService,
   ) {}
 
   public async listAgents() {
@@ -15,6 +17,16 @@ export class CrmController {
 
   public async createAgent(data: { name: string; email?: string; color?: string; role?: AgentRole }) {
     return this.crmService.createAgent(data);
+  }
+
+  // LYD-101
+  public async syncAgentSedes(agents: unknown) {
+    return this.crmService.syncAgentSedes(agents);
+  }
+
+  // LYD-101
+  public async recordMessageAuthor(data: { instanceName?: string; messageKeyId?: string; agentId?: string }) {
+    return this.messageAuthorService.recordAgentMessage(data);
   }
 
   public async listConversations(query: {

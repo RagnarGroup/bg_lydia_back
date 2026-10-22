@@ -56,7 +56,7 @@ import { chatwootImport } from '@api/integrations/chatbot/chatwoot/utils/chatwoo
 import * as s3Service from '@api/integrations/storage/s3/libs/minio.server';
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository, Query } from '@api/repository/repository.service';
-import { chatbotController, waMonitor } from '@api/server.module';
+import { chatbotController, messageAuthorService, waMonitor } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
 import { Events, MessageSubtype, TypeMediaMessage, wa } from '@api/types/wa.types';
@@ -79,7 +79,7 @@ import { BadRequestException, InternalServerErrorException, NotFoundException } 
 import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { Boom } from '@hapi/boom';
 import { createId as cuid } from '@paralleldrive/cuid2';
-import { Instance, Message } from '@prisma/client';
+import { Instance, Message, MessageAuthorKind } from '@prisma/client';
 import { createJid } from '@utils/createJid';
 import { fetchLatestWaWebVersion } from '@utils/fetchLatestWaWebVersion';
 import { makeProxyAgent, makeProxyAgentUndici } from '@utils/makeProxyAgent';
@@ -2688,7 +2688,8 @@ export class BaileysStartupService extends ChannelStartupService {
       // historial mas abajo en este mismo handler antes de que llegue un
       // segundo mensaje. Aceptado para v1 -- mejor perder una bienvenida
       // puntual que mandarla dos veces.
-      await this.textMessage({ number: remoteJid, text: message }, false);
+      const sent = await this.textMessage({ number: remoteJid, text: message }, false);
+      await messageAuthorService.recordAutomatic(this.instanceId, sent, MessageAuthorKind.bienvenida);
     } catch (error) {
       this.logger.error(`Welcome message failed for ${remoteJid} - ${this.instanceId}: ${error}`);
     }

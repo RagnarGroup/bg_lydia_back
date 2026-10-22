@@ -16,7 +16,7 @@ import {
 import * as s3Service from '@api/integrations/storage/s3/libs/minio.server';
 import { ProviderFiles } from '@api/provider/sessions';
 import { PrismaRepository } from '@api/repository/repository.service';
-import { botService, chatbotController } from '@api/server.module';
+import { botService, chatbotController, messageAuthorService } from '@api/server.module';
 import { CacheService } from '@api/services/cache.service';
 import { ChannelStartupService } from '@api/services/channel.service';
 import { attributeInboundMessage } from '@api/services/lead-attribution.service';
@@ -24,6 +24,7 @@ import { messageText, whatsappReferralAttribution } from '@api/services/lead-att
 import { Events, wa } from '@api/types/wa.types';
 import { AudioConverter, Chatwoot, ConfigService, Database, Openai, S3, WaBusiness } from '@config/env.config';
 import { BadRequestException, InternalServerErrorException } from '@exceptions';
+import { MessageAuthorKind } from '@prisma/client';
 import { createJid, extractBsuid } from '@utils/createJid';
 import { status } from '@utils/renderStatus';
 import { sendTelemetry } from '@utils/sendTelemetry';
@@ -1328,14 +1329,16 @@ export class BusinessStartupService extends ChannelStartupService {
   private botSender(remoteJid: string) {
     return {
       sendText: async (text: string) => {
-        await this.textMessage({ number: remoteJid, text }, false);
+        const sent = await this.textMessage({ number: remoteJid, text }, false);
+        await messageAuthorService.recordAutomatic(this.instanceId, sent, MessageAuthorKind.bot);
       },
       sendButtons: async (body: string, buttons: { id: string; title: string }[]) => {
-        await this.buttonMessage({
+        const sent = await this.buttonMessage({
           number: remoteJid,
           title: body,
           buttons: buttons.map((b) => ({ type: 'reply', displayText: b.title, id: b.id })),
         } as SendButtonsDto);
+        await messageAuthorService.recordAutomatic(this.instanceId, sent, MessageAuthorKind.bot);
       },
     };
   }
@@ -1396,7 +1399,8 @@ export class BusinessStartupService extends ChannelStartupService {
 
       // Si textMessage falla no se reintenta en un mensaje siguiente:
       // aceptado para v1 -- mejor perder una bienvenida que mandarla dos veces.
-      await this.textMessage({ number: remoteJid, text: message as string }, false);
+      const sent = await this.textMessage({ number: remoteJid, text: message as string }, false);
+      await messageAuthorService.recordAutomatic(this.instanceId, sent, MessageAuthorKind.bienvenida);
     } catch (error) {
       this.logger.error(`Welcome message failed for ${remoteJid} - ${this.instanceId}: ${error}`);
     }
