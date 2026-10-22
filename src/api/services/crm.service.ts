@@ -69,18 +69,41 @@ export class CrmService {
     return this.prisma.agent.create({ data });
   }
 
-  // LYD-101: sedes de la asesora, copiadas del SGA (users -> user_sedes).
-  // Reemplaza la lista completa.
-  public async updateAgentSedes(agentId: string, sedes: unknown) {
-    if (!Array.isArray(sedes) || sedes.some((s) => typeof s !== 'string' || !s.trim())) {
-      throw new BadRequestException('sedes debe ser una lista de nombres de sede');
+  // LYD-101: sedes de las asesoras, copiadas del SGA (users -> user_sedes).
+  // Se cruza por email (el mismo de Google con el que entran a Lydia y al SGA)
+  // y reemplaza la lista completa de cada agente encontrado.
+  public async syncAgentSedes(agents: unknown) {
+    const valid =
+      Array.isArray(agents) &&
+      agents.every(
+        (a) =>
+          typeof a?.email === 'string' &&
+          a.email.trim() &&
+          Array.isArray(a.sedes) &&
+          a.sedes.every((s: unknown) => typeof s === 'string' && s.trim()),
+      );
+    if (!valid) {
+      throw new BadRequestException('agents debe ser una lista de { email, sedes: string[] }');
     }
-    const agent = await this.prisma.agent.findUnique({ where: { id: agentId }, select: { id: true } });
-    if (!agent) {
-      throw new NotFoundException(`Agent ${agentId} not found`);
+
+    const updated: string[] = [];
+    const notFound: string[] = [];
+    for (const { email, sedes } of agents as { email: string; sedes: string[] }[]) {
+      const agent = await this.prisma.agent.findFirst({
+        where: { email: { equals: email.trim(), mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (!agent) {
+        notFound.push(email);
+        continue;
+      }
+      await this.prisma.agent.update({
+        where: { id: agent.id },
+        data: { sedes: [...new Set(sedes.map((s) => s.trim()))] },
+      });
+      updated.push(email);
     }
-    const unique = [...new Set(sedes.map((s: string) => s.trim()))];
-    return this.prisma.agent.update({ where: { id: agentId }, data: { sedes: unique } });
+    return { updated, notFound };
   }
 
   // Chat y Contact no tienen relacion FK entre si en el schema de Evolution

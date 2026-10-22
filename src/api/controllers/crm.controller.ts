@@ -20,8 +20,8 @@ export class CrmController {
   }
 
   // LYD-101
-  public async updateAgentSedes(agentId: string, sedes: unknown) {
-    return this.crmService.updateAgentSedes(agentId, sedes);
+  public async syncAgentSedes(agents: unknown) {
+    return this.crmService.syncAgentSedes(agents);
   }
 
   // LYD-101

@@ -21,9 +21,9 @@ export class CrmRouter {
         const { name, email, color, role } = req.body ?? {};
         return res.status(201).json(await crmController.createAgent({ name, email, color, role: role as AgentRole }));
       })
-      // LYD-101: sedes de la asesora (copiadas del SGA).
-      .patch('/agents/:agentId/sedes', async (req, res) => {
-        return res.json(await crmController.updateAgentSedes(req.params.agentId, req.body?.sedes));
+      // LYD-101: sedes de las asesoras copiadas del SGA, cruzadas por email.
+      .put('/agents/sedes', async (req, res) => {
+        return res.json(await crmController.syncAgentSedes(req.body?.agents));
       })
       // LYD-101: autoria de un mensaje enviado desde el inbox (agentId de la
       // sesion + key.id devuelto por el envio).
