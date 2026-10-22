@@ -49,6 +49,44 @@ export class MessageAuthorService {
     }
   }
 
+  // LYD-105: "Ver detalles" de un mensaje en el inbox: quien lo envio (segun
+  // esta tabla) y hasta donde llego. `messageId` es Message.id, el mismo id
+  // que usa el front para cada burbuja.
+  public async getMessageDetails(messageId: string) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: {
+        instanceId: true,
+        key: true,
+        status: true,
+        messageTimestamp: true,
+        MessageUpdate: { select: { status: true } },
+      },
+    });
+    if (!message) {
+      throw new NotFoundException(`Mensaje ${messageId} no encontrado`);
+    }
+
+    const key = message.key as { id?: string; fromMe?: boolean };
+    const fromMe = key?.fromMe === true;
+    const author =
+      fromMe && key?.id
+        ? await this.prisma.messageAuthor.findUnique({
+            where: { instanceId_messageKeyId: { instanceId: message.instanceId, messageKeyId: key.id } },
+            select: { kind: true, createdAt: true, Agent: { select: { name: true, email: true } } },
+          })
+        : null;
+
+    return {
+      messageId,
+      fromMe,
+      sentAt: new Date(message.messageTimestamp * 1000).toISOString(),
+      sender: !fromMe ? 'cliente' : (author?.kind ?? 'sin_registro'),
+      agent: author?.Agent ?? null,
+      delivery: fromMe ? deliveryStatus([message.status, ...message.MessageUpdate.map((u) => u.status)]) : null,
+    };
+  }
+
   // Idempotente: reintentar el registro de un mismo mensaje no duplica ni
   // cambia el autor ya guardado.
   private upsert(instanceId: string, messageKeyId: string, kind: MessageAuthorKind, agentId: string | null) {
@@ -58,4 +96,28 @@ export class MessageAuthorService {
       update: {},
     });
   }
+}
+
+// LYD-105: estado de entrega mas avanzado entre el del mensaje y sus updates.
+// Baileys los guarda en mayusculas (SERVER_ACK, DELIVERY_ACK, READ...) y
+// Cloud API en minusculas (sent, delivered, read).
+const DELIVERY_RANK: Record<string, { rank: number; label: string }> = {
+  error: { rank: 0, label: 'error' },
+  failed: { rank: 0, label: 'error' },
+  pending: { rank: 1, label: 'pendiente' },
+  server_ack: { rank: 2, label: 'enviado' },
+  sent: { rank: 2, label: 'enviado' },
+  delivery_ack: { rank: 3, label: 'entregado' },
+  delivered: { rank: 3, label: 'entregado' },
+  read: { rank: 4, label: 'leido' },
+  played: { rank: 4, label: 'leido' },
+};
+
+function deliveryStatus(statuses: (string | null)[]): string | null {
+  let best: { rank: number; label: string } | null = null;
+  for (const status of statuses) {
+    const entry = status ? DELIVERY_RANK[status.toLowerCase()] : undefined;
+    if (entry && (!best || entry.rank > best.rank)) best = entry;
+  }
+  return best?.label ?? null;
 }
