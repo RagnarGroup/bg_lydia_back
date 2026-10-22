@@ -65,15 +65,24 @@ auditoría). Horario en America/Lima, programado dentro del propio proceso
   tarde, sale apenas termina.
 - **23:30**: si no salió, alerta a `COMMERCIAL_AUDIT_ALERT_TO`.
 
-Se activa con `COMMERCIAL_AUDIT_ENABLED=true` en `/lydia_prod/.env`; el envío
-necesita `SMTP_USER`/`SMTP_PASS` (contraseña de aplicación de Google
-Workspace). Como `docker-compose.yml` vive en `/lydia_prod/` y el workflow solo
-sincroniza `back/`, las variables nuevas del compose se copian a mano desde
-`back/deploy/lydia-prod/docker-compose.yml`.
+Se activa con `COMMERCIAL_AUDIT_ENABLED=true` en `/lydia_prod/.env`. El correo
+sale con la misma cuenta que usa el SGA: `soporte@brittanygroup.edu.pe` por
+`mail.brittanygroup.edu.pe:465` (buzón de Banahost; el MX del dominio está en
+Google, pero el envío va por Banahost). `SMTP_PASS` es el `MAIL_PASS` del `.env`
+del SGA, copiado dentro del VPS. Como `docker-compose.yml` vive en
+`/lydia_prod/` y el workflow solo sincroniza `back/`, las variables nuevas del
+compose se copian a mano desde `back/deploy/lydia-prod/docker-compose.yml`.
 
-Las sedes de cada asesora vienen del SGA (`users` → `user_sedes`, rol
-`asesora`) y se cargan con `PUT /crm/agents/sedes` (`{ agents: [{ email,
-sedes }] }`, cruce por email).
+Si `evolution-api` se reinicia después del corte (por un deploy, por ejemplo) y
+el reporte del día no salió, al arrancar vuelve a correr la evaluación y la
+envía apenas termina si ya pasaron las 22:00.
+
+Las sedes de cada agente vienen del SGA (`users` → `user_sedes`, cualquier rol,
+cruce por email). Se sincronizan con `sync-sedes-sga.sh` (en esta carpeta; en el
+VPS: `sudo /lydia_prod/back/deploy/lydia-prod/sync-sedes-sga.sh`), que solo
+lee el SGA y actualiza `Agent.sedes` en Lydia. Correrlo cuando cambien las
+sedes del personal en el SGA. También existe `PUT /crm/agents/sedes`
+(`{ agents: [{ email, sedes }] }`).
 
 Operación manual (apikey global, contra `127.0.0.1:8091` en el VPS):
 

@@ -1,8 +1,8 @@
 import nodemailer, { Transporter } from 'nodemailer';
 
-// LYD-102: envio del reporte por SMTP (cuenta de Google Workspace de
-// brittanygroup.edu.pe). Sin SMTP_HOST/SMTP_USER/SMTP_PASS no se envia nada y
-// la corrida queda evaluada, consultable por la API.
+// LYD-102: envio del reporte por SMTP (en produccion, la cuenta soporte@ del
+// SGA en el buzon de Banahost). Sin SMTP_HOST/SMTP_USER/SMTP_PASS no se envia
+// nada y la corrida queda evaluada, consultable por la API.
 export class AuditMailer {
   private transporter: Transporter | null = null;
 

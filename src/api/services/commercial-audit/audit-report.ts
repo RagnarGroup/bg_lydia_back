@@ -67,7 +67,7 @@ export function buildAuditReportHtml(input: ReportInput): string {
     notes(approx, input.unattributed, voiceNotes),
   ];
 
-  return `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:900px;margin:0 auto;padding:16px;">${sections.join('')}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:900px;margin:0 auto;padding:16px;">${sections.join('')}</body></html>`;
 }
 
 function agentTable(audits: ReportAudit[], previous: ReportInput['previous']): string {
