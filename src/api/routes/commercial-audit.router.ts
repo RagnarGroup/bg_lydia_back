@@ -4,7 +4,7 @@ import { commercialAuditController } from '@api/server.module';
 import { Router } from 'express';
 
 // LYD-102: corridas de la auditoria comercial diaria. La programacion diaria
-// (20:00 evalua, 21:00 envia) no pasa por aca; estas rutas son para el piloto
+// (21:00 evalua, 22:00 envia) no pasa por aca; estas rutas son para el piloto
 // y para reprocesar o reenviar un dia puntual.
 export class CommercialAuditRouter {
   public readonly router: Router = Router();

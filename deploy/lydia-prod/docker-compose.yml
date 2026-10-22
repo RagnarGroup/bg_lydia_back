@@ -201,11 +201,11 @@ services:
       CODEX_BRIDGE_URL: http://172.18.0.1:3920
       CODEX_BRIDGE_TOKEN: ${CODEX_BRIDGE_TOKEN}
 
-      # LYD-102: auditoria comercial diaria META K-01 (20:00 evalua, 21:00
+      # LYD-102: auditoria comercial diaria META K-01 (21:00 evalua, 22:00
       # envia, America/Lima). Apagada salvo COMMERCIAL_AUDIT_ENABLED=true.
       # El correo sale por SMTP de Google Workspace con contrasena de aplicacion.
       COMMERCIAL_AUDIT_ENABLED: ${COMMERCIAL_AUDIT_ENABLED:-false}
-      COMMERCIAL_AUDIT_TO: ${COMMERCIAL_AUDIT_TO:-}
+      COMMERCIAL_AUDIT_TO: ${COMMERCIAL_AUDIT_TO:-carlos@brittanygroup.edu.pe,dir@brittanygroup.edu.pe,christian@brittanygroup.edu.pe,mkt@brittanygroup.edu.pe}
       COMMERCIAL_AUDIT_ALERT_TO: ${COMMERCIAL_AUDIT_ALERT_TO:-desarrollo@brittanygroup.edu.pe}
       COMMERCIAL_AUDIT_FROM: ${COMMERCIAL_AUDIT_FROM:-}
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}

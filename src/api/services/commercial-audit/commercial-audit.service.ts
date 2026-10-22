@@ -12,17 +12,17 @@ import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } fro
 // LYD-102: auditoria comercial diaria META K-01. Solo lectura sobre las
 // conversaciones: nunca envia nada a clientes.
 //
-// - 20:00 (Lima): evalua las conversaciones donde escribio una asesora en la
-//   ventana 20:00 de ayer -> 20:00 de hoy (lo posterior entra al dia siguiente).
-// - 21:00: manda el reporte a Direccion. Si la evaluacion termina despues, se
+// - 21:00 (Lima): evalua las conversaciones donde escribio una asesora en la
+//   ventana 21:00 de ayer -> 21:00 de hoy (lo posterior entra al dia siguiente).
+// - 22:00: manda el reporte a Direccion. Si la evaluacion termina despues, se
 //   manda apenas termina.
-// - 22:30: si todavia no salio, aviso de "reporte no generado".
+// - 23:30: si todavia no salio, aviso de "reporte no generado".
 
 const TIMEZONE = 'America/Lima';
 // Peru no tiene horario de verano: UTC-5 fijo.
 const LIMA_OFFSET_HOURS = -5;
-const CUTOFF_HOUR = 20;
-const DELIVERY_HOUR = 21;
+const CUTOFF_HOUR = 21;
+const DELIVERY_HOUR = 22;
 const CONTEXT_MESSAGES = 60;
 // Conversaciones por llamada al codex bridge, de a una llamada por vez: el
 // bridge admite 2 ejecuciones en paralelo y las asesoras lo comparten para las
@@ -95,8 +95,10 @@ export class CommercialAuditService {
       timezone: TIMEZONE,
     });
     cron.schedule(`0 ${DELIVERY_HOUR} * * *`, () => void this.deliverScheduled(todayInLima()), { timezone: TIMEZONE });
-    cron.schedule('30 22 * * *', () => void this.alertIfNotSent(todayInLima()), { timezone: TIMEZONE });
-    this.logger.info('Auditoria comercial diaria programada: corte 20:00, envio 21:00 (America/Lima)');
+    cron.schedule(`30 ${DELIVERY_HOUR + 1} * * *`, () => void this.alertIfNotSent(todayInLima()), {
+      timezone: TIMEZONE,
+    });
+    this.logger.info('Auditoria comercial diaria programada: corte 21:00, envio 22:00 (America/Lima)');
   }
 
   // Corrida manual (piloto, reproceso). No envia: el envio es aparte.
@@ -235,7 +237,7 @@ export class CommercialAuditService {
     if (run?.status === 'sent') return;
     await this.alert(
       reportDate,
-      `A las 22:30 el reporte seguia sin enviarse (estado: ${run?.status ?? 'sin corrida'}).`,
+      `A las 23:30 el reporte seguia sin enviarse (estado: ${run?.status ?? 'sin corrida'}).`,
     );
   }
 

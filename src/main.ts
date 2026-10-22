@@ -174,7 +174,7 @@ async function bootstrap() {
 
   tiktokController.startTokenKeepAlive();
 
-  // LYD-102: auditoria comercial diaria (20:00 evalua, 21:00 envia; America/Lima).
+  // LYD-102: auditoria comercial diaria (21:00 evalua, 22:00 envia; America/Lima).
   commercialAuditService.schedule();
 
   onUnexpectedError();

@@ -59,11 +59,11 @@ asesoras y manda el reporte por correo (LYD-101 autoría por mensaje, LYD-102
 auditoría). Horario en America/Lima, programado dentro del propio proceso
 (`node-cron`):
 
-- **20:00**: corte y evaluación de la ventana 20:00 de ayer → 20:00 de hoy, por
+- **21:00**: corte y evaluación de la ventana 21:00 de ayer → 21:00 de hoy, por
   el codex bridge, con los datos del cliente anonimizados.
-- **21:00**: correo a `COMMERCIAL_AUDIT_TO`. Si la evaluación termina más
+- **22:00**: correo a `COMMERCIAL_AUDIT_TO`. Si la evaluación termina más
   tarde, sale apenas termina.
-- **22:30**: si no salió, alerta a `COMMERCIAL_AUDIT_ALERT_TO`.
+- **23:30**: si no salió, alerta a `COMMERCIAL_AUDIT_ALERT_TO`.
 
 Se activa con `COMMERCIAL_AUDIT_ENABLED=true` en `/lydia_prod/.env`; el envío
 necesita `SMTP_USER`/`SMTP_PASS` (contraseña de aplicación de Google
