@@ -17,6 +17,7 @@ export function getTiktokApi(configService: ConfigService): TiktokApi {
       appSecret: config.APP_SECRET,
       apiUrl: config.API_URL,
       apiVersion: config.API_VERSION,
+      messagingEnabled: config.MESSAGING_ENABLED,
     });
   }
   return api;

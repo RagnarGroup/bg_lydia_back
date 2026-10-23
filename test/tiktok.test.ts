@@ -210,13 +210,22 @@ describe('cifrado de tokens', () => {
 describe('TiktokApi', () => {
   const config = { appId: 'app', appSecret: 'sec', apiUrl: 'https://api.test/open_api', apiVersion: 'v1.3' };
 
-  it('arma la URL de autorizacion con los scopes de DMs', () => {
+  it('arma la URL de autorizacion sin scopes de DMs mientras la mensajeria no esta habilitada', () => {
     const api = new TiktokApi(config, {} as any);
     const url = new URL(api.authorizeUrl('https://x/tiktok/callback', 'st'));
     assert.equal(url.origin + url.pathname, 'https://www.tiktok.com/v2/auth/authorize');
     assert.equal(url.searchParams.get('client_key'), 'app');
     assert.equal(url.searchParams.get('state'), 'st');
-    assert.ok(url.searchParams.get('scope')?.includes('message.list.send'));
+    assert.equal(url.searchParams.get('disable_auto_auth'), '1');
+    assert.ok(url.searchParams.get('scope')?.includes('user.insights'));
+    assert.ok(!url.searchParams.get('scope')?.includes('message.list'));
+  });
+
+  it('suma los scopes de DMs con la mensajeria habilitada', () => {
+    const api = new TiktokApi({ ...config, messagingEnabled: true }, {} as any);
+    const scope = new URL(api.authorizeUrl('https://x/tiktok/callback', 'st')).searchParams.get('scope');
+    assert.ok(scope?.includes('message.list.send'));
+    assert.ok(scope?.includes('user.info.basic'));
   });
 
   it('convierte code != 0 en TiktokApiError, tambien cuando viene en un 4xx', async () => {
