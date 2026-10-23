@@ -3,23 +3,29 @@ import FormData from 'form-data';
 
 // LYD-95: cliente HTTP de la Business Messaging API de TikTok. Toda respuesta util es HTTP 2xx con
 // `code === 0`; cualquier otro `code` es un rechazo de negocio (token invalido, fuera de ventana, etc.).
-export const TIKTOK_DM_SCOPES = [
+export const TIKTOK_ACCOUNT_SCOPES = [
   'user.info.basic',
   'user.info.username',
   'user.info.stats',
   'user.info.profile',
   'user.account.type',
   'user.insights',
-  'message.list.read',
-  'message.list.send',
-  'message.list.manage',
+  'video.list',
+  'video.insights',
+  'comment.list',
+  'comment.list.manage',
 ];
+
+// LYD-106: TikTok rechaza el pedido entero si incluye scopes que la app no tiene aprobados, asi que los de
+// mensajes solo se piden con la Business Messaging API habilitada (TIKTOK_MESSAGING_ENABLED).
+export const TIKTOK_DM_SCOPES = ['message.list.read', 'message.list.send', 'message.list.manage'];
 
 export type TiktokApiConfig = {
   appId: string;
   appSecret: string;
   apiUrl: string;
   apiVersion: string;
+  messagingEnabled?: boolean;
 };
 
 export type TiktokHttp = {
@@ -82,13 +88,19 @@ export class TiktokApi {
     return { 'Access-Token': accessToken, 'Content-Type': 'application/json' };
   }
 
+  scopes(): string[] {
+    return this.config.messagingEnabled ? [...TIKTOK_ACCOUNT_SCOPES, ...TIKTOK_DM_SCOPES] : TIKTOK_ACCOUNT_SCOPES;
+  }
+
   authorizeUrl(redirectUri: string, state: string): string {
     const query = new URLSearchParams({
       response_type: 'code',
       client_key: this.config.appId,
       redirect_uri: redirectUri,
       state,
-      scope: TIKTOK_DM_SCOPES.join(','),
+      scope: this.scopes().join(','),
+      // Sin esto, una cuenta que ya autorizo vuelve sin `code` y reconectar (p. ej. para sumar scopes) no sirve.
+      disable_auto_auth: '1',
     });
     return `https://www.tiktok.com/v2/auth/authorize?${query.toString()}`;
   }

@@ -204,6 +204,7 @@ export type Tiktok = {
   API_URL: string;
   TOKEN_ENCRYPTION_KEY: string;
   POST_AUTH_REDIRECT: string;
+  MESSAGING_ENABLED: boolean;
 };
 
 export type EventsWebhook = {
@@ -751,6 +752,7 @@ export class ConfigService {
         API_URL: process.env.TIKTOK_API_URL || 'https://business-api.tiktok.com/open_api',
         TOKEN_ENCRYPTION_KEY: process.env.TIKTOK_TOKEN_ENCRYPTION_KEY || '',
         POST_AUTH_REDIRECT: process.env.TIKTOK_POST_AUTH_REDIRECT || '',
+        MESSAGING_ENABLED: process.env.TIKTOK_MESSAGING_ENABLED === 'true',
       },
       LOG: {
         LEVEL:
