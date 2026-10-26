@@ -5,11 +5,13 @@ import { LeadActivityType, LeadStage, LeadVisitStatus, Prisma } from '@prisma/cl
 import {
   LANDING_DEFAULT_TAG,
   LANDING_DETALLE_LABEL,
+  LANDING_PROGRAMA_ALIAS,
   LANDING_PROGRAMAS,
   LANDING_PROGRAMAS_CONSULTA,
   LANDING_SEDE_CIUDAD,
   LANDING_SEDES,
   LANDING_SOURCE,
+  LANDING_TAG_ALIAS,
   LANDING_TIPO_CONSULTA,
   LANDING_TZ_OFFSET,
   LandingSede,
@@ -712,7 +714,8 @@ export class LandingLeadsService {
   }
 
   private validateConsultaBody(body: LandingConsultaBody) {
-    const programa = this.requiredString(body.programa, 'programa', 30);
+    const recibido = this.requiredString(body.programa, 'programa', 30);
+    const programa = LANDING_PROGRAMA_ALIAS[recibido] ?? recibido;
     if (!(LANDING_PROGRAMAS_CONSULTA as readonly string[]).includes(programa)) {
       throw new BadRequestException(`programa must be one of: ${LANDING_PROGRAMAS_CONSULTA.join(', ')}`);
     }
@@ -722,7 +725,7 @@ export class LandingLeadsService {
     const whatsapp = this.optionalText(body.whatsapp, 'whatsapp', 50);
     const externalId = this.optionalText(body.externalId, 'externalId', 120);
     const pageUrl = this.optionalText(body.pageUrl, 'pageUrl', 500);
-    const tags = this.optionalTags(body.tags);
+    const tags = [...new Set(this.optionalTags(body.tags).map((t) => LANDING_TAG_ALIAS[t] ?? t))];
     const attribution = this.optionalAttribution(body.attribution);
     const detalle = this.optionalDetalle(body.detalle);
     const labels: Partial<Record<string, string>> =

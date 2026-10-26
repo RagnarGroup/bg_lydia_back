@@ -25,10 +25,21 @@ export const LANDING_TZ_OFFSET = '-05:00';
 
 // LYD-100: consultas sin visita a sede (landings internacionales, p. ej.
 // Spanish Immersion): se identifican por el email, sin sede ni fecha de visita.
-// LYD-107: TEFL England (teflengland.brittanygroup.edu.pe) usa el mismo tipo.
-// LYD-108: Spanish TEFL (spanishteflperu.com) también.
+// LYD-107: TEFL BrittanyGroup (tefl.brittanygroup.edu.pe; se llamaba TEFL
+// England hasta LYD-109) usa el mismo tipo. LYD-108: Spanish TEFL
+// (spanishteflperu.com) también.
 export const LANDING_TIPO_CONSULTA = 'consulta';
-export const LANDING_PROGRAMAS_CONSULTA = ['Spanish Immersion', 'TEFL England', 'Spanish TEFL'] as const;
+export const LANDING_PROGRAMAS_CONSULTA = ['Spanish Immersion', 'TEFL BrittanyGroup', 'Spanish TEFL'] as const;
+
+// LYD-109: nombres viejos que se siguen aceptando y se guardan con el nombre
+// actual (una página vieja abierta en el navegador o un backend sin actualizar
+// no fallan, y la misma persona no termina en dos leads).
+export const LANDING_PROGRAMA_ALIAS: Partial<Record<string, (typeof LANDING_PROGRAMAS_CONSULTA)[number]>> = {
+  'TEFL England': 'TEFL BrittanyGroup',
+};
+export const LANDING_TAG_ALIAS: Partial<Record<string, string>> = {
+  TEFL_ENGLAND: 'TEFL_BRITTANYGROUP',
+};
 
 // Etiquetas de los datos de la consulta que cambian según el programa (el resto
 // usa la etiqueta por defecto del servicio): "nivel" es de español, de inglés o
@@ -38,6 +49,6 @@ export const LANDING_DETALLE_LABEL: Record<
   Partial<Record<'nivel' | 'pais', string>>
 > = {
   'Spanish Immersion': { nivel: 'Nivel de español' },
-  'TEFL England': { nivel: 'Nivel de inglés' },
+  'TEFL BrittanyGroup': { nivel: 'Nivel de inglés' },
   'Spanish TEFL': { nivel: 'Certificación TEFL', pais: 'Nacionalidad' },
 };

@@ -113,13 +113,13 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     service = new LandingLeadsService(db as any);
   });
 
-  it('acepta TEFL England (LYD-107) con WhatsApp y el nivel como nivel de inglés', async () => {
+  it('acepta TEFL BrittanyGroup (LYD-107, LYD-109) con WhatsApp y el nivel como nivel de inglés', async () => {
     const r = await service.createFromLanding(
       consulta({
-        programa: 'TEFL England',
+        programa: 'TEFL BrittanyGroup',
         correo: 'maria@example.com',
         whatsapp: '987654321',
-        tags: ['TEFL_ENGLAND'],
+        tags: ['TEFL_BRITTANYGROUP'],
         attribution: { utm_source: 'facebook' },
         detalle: { opcion: 'Prácticas: Arequipa', precio: 'S/ 2,600', nivel: 'C1' },
         externalId: 'tefl-england:sub-1',
@@ -127,10 +127,31 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     );
     assert.equal(r.created, true);
     const lead = db.leads[0];
-    assert.equal(lead.programa, 'TEFL England');
+    assert.equal(lead.programa, 'TEFL BrittanyGroup');
     assert.equal(lead.phone, '987654321');
-    assert.deepEqual(lead.tags, ['TEFL_ENGLAND']);
+    assert.deepEqual(lead.tags, ['TEFL_BRITTANYGROUP']);
     assert.equal(lead.observations, 'Opción: Prácticas: Arequipa · Precio: S/ 2,600 · Nivel de inglés: C1');
+  });
+
+  it('el nombre viejo "TEFL England" se guarda como TEFL BrittanyGroup y no duplica el lead (LYD-109)', async () => {
+    await service.createFromLanding(
+      consulta({ programa: 'TEFL England', correo: 'luz@example.com', tags: ['TEFL_ENGLAND'], externalId: 'a-1' }),
+    );
+    const lead = db.leads[0];
+    assert.equal(lead.programa, 'TEFL BrittanyGroup');
+    assert.deepEqual(lead.tags, ['TEFL_BRITTANYGROUP']);
+    assert.match(lead.observations, /Nivel de inglés/);
+
+    const r = await service.createFromLanding(
+      consulta({
+        programa: 'TEFL BrittanyGroup',
+        correo: 'luz@example.com',
+        tags: ['TEFL_BRITTANYGROUP', 'TEFL_ENGLAND'],
+        externalId: 'a-2',
+      }),
+    );
+    assert.equal(r.created, false);
+    assert.equal(db.leads.length, 1);
   });
 
   it('acepta Spanish TEFL (LYD-108) sin WhatsApp, con nacionalidad, certificación TEFL y mensaje', async () => {
@@ -166,10 +187,10 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     );
   });
 
-  it('un mismo correo en Spanish Immersion y en TEFL England son dos leads distintos', async () => {
+  it('un mismo correo en Spanish Immersion y en TEFL BrittanyGroup son dos leads distintos', async () => {
     await service.createFromLanding(consulta({ correo: 'ana@example.com' }));
     const r = await service.createFromLanding(
-      consulta({ programa: 'TEFL England', correo: 'ana@example.com', tags: ['TEFL_ENGLAND'] }),
+      consulta({ programa: 'TEFL BrittanyGroup', correo: 'ana@example.com', tags: ['TEFL_BRITTANYGROUP'] }),
     );
     assert.equal(r.created, true);
     assert.equal(db.leads.length, 2);
