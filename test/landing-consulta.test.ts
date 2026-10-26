@@ -133,6 +133,39 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     assert.equal(lead.observations, 'Opción: Prácticas: Arequipa · Precio: S/ 2,600 · Nivel de inglés: C1');
   });
 
+  it('acepta Spanish TEFL (LYD-108) sin WhatsApp, con nacionalidad, certificación TEFL y mensaje', async () => {
+    const r = await service.createFromLanding(
+      consulta({
+        programa: 'Spanish TEFL',
+        correo: 'tom@example.com',
+        tags: ['SPANISH_TEFL'],
+        detalle: {
+          opcion: 'Plus',
+          mesInicio: 'January 2027',
+          pais: 'British',
+          nivel: 'Already qualified',
+          mensaje: 'Two years teaching in Spain.',
+        },
+        externalId: 'spanish-tefl:sub-1',
+      }),
+    );
+    assert.equal(r.created, true);
+    const lead = db.leads[0];
+    assert.equal(lead.programa, 'Spanish TEFL');
+    assert.equal(lead.phone, null);
+    assert.equal(
+      lead.observations,
+      'Opción: Plus · Mes de inicio: January 2027 · Nacionalidad: British · Certificación TEFL: Already qualified · Mensaje: Two years teaching in Spain.',
+    );
+  });
+
+  it('rechaza un mensaje de más de 1000 caracteres', async () => {
+    await rejectsWith(
+      service.createFromLanding(consulta({ programa: 'Spanish TEFL', detalle: { mensaje: 'x'.repeat(1001) } })),
+      /detalle\.mensaje must be at most 1000/,
+    );
+  });
+
   it('un mismo correo en Spanish Immersion y en TEFL England son dos leads distintos', async () => {
     await service.createFromLanding(consulta({ correo: 'ana@example.com' }));
     const r = await service.createFromLanding(

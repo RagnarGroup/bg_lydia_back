@@ -4,7 +4,7 @@ import { LeadActivityType, LeadStage, LeadVisitStatus, Prisma } from '@prisma/cl
 
 import {
   LANDING_DEFAULT_TAG,
-  LANDING_NIVEL_LABEL,
+  LANDING_DETALLE_LABEL,
   LANDING_PROGRAMAS,
   LANDING_PROGRAMAS_CONSULTA,
   LANDING_SEDE_CIUDAD,
@@ -81,17 +81,26 @@ export type LandingConsultaBody = {
   attribution?: Record<string, unknown>;
   // Datos propios de la consulta: se guardan legibles en observations y
   // estructurados en el historial (LeadActivity.meta.detalle).
-  detalle?: { opcion?: string; precio?: string; mesInicio?: string; pais?: string; nivel?: string };
+  detalle?: {
+    opcion?: string;
+    precio?: string;
+    mesInicio?: string;
+    pais?: string;
+    nivel?: string;
+    mensaje?: string;
+  };
 };
 
 // Orden y etiqueta de cada dato de la consulta en las observaciones del lead.
-// La de "nivel" se reemplaza por la del programa (LANDING_NIVEL_LABEL).
+// Algunas etiquetas cambian según el programa (LANDING_DETALLE_LABEL).
 const DETALLE_FIELDS: [keyof NonNullable<LandingConsultaBody['detalle']>, string, number][] = [
   ['opcion', 'Opción', 80],
   ['precio', 'Precio', 30],
   ['mesInicio', 'Mes de inicio', 30],
   ['pais', 'País', 80],
   ['nivel', 'Nivel', 30],
+  // LYD-108: lo que la persona escribió en el formulario.
+  ['mensaje', 'Mensaje', 1000],
 ];
 
 export class LandingLeadsService {
@@ -716,12 +725,11 @@ export class LandingLeadsService {
     const tags = this.optionalTags(body.tags);
     const attribution = this.optionalAttribution(body.attribution);
     const detalle = this.optionalDetalle(body.detalle);
-    const nivelLabel = LANDING_NIVEL_LABEL[programa as keyof typeof LANDING_NIVEL_LABEL];
+    const labels: Partial<Record<string, string>> =
+      LANDING_DETALLE_LABEL[programa as keyof typeof LANDING_DETALLE_LABEL];
     const observations =
       [
-        ...DETALLE_FIELDS.map(([key, label]) =>
-          detalle?.[key] ? `${key === 'nivel' ? nivelLabel : label}: ${detalle[key]}` : null,
-        ),
+        ...DETALLE_FIELDS.map(([key, label]) => (detalle?.[key] ? `${labels[key] ?? label}: ${detalle[key]}` : null)),
         pageUrl ? `Origen: ${pageUrl}` : null,
       ]
         .filter(Boolean)
