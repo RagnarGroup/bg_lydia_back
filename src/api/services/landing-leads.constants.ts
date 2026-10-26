@@ -26,11 +26,18 @@ export const LANDING_TZ_OFFSET = '-05:00';
 // LYD-100: consultas sin visita a sede (landings internacionales, p. ej.
 // Spanish Immersion): se identifican por el email, sin sede ni fecha de visita.
 // LYD-107: TEFL England (teflengland.brittanygroup.edu.pe) usa el mismo tipo.
+// LYD-108: Spanish TEFL (spanishteflperu.com) también.
 export const LANDING_TIPO_CONSULTA = 'consulta';
-export const LANDING_PROGRAMAS_CONSULTA = ['Spanish Immersion', 'TEFL England'] as const;
+export const LANDING_PROGRAMAS_CONSULTA = ['Spanish Immersion', 'TEFL England', 'Spanish TEFL'] as const;
 
-// Etiqueta del dato "nivel" en las observaciones: el idioma depende del programa.
-export const LANDING_NIVEL_LABEL: Record<(typeof LANDING_PROGRAMAS_CONSULTA)[number], string> = {
-  'Spanish Immersion': 'Nivel de español',
-  'TEFL England': 'Nivel de inglés',
+// Etiquetas de los datos de la consulta que cambian según el programa (el resto
+// usa la etiqueta por defecto del servicio): "nivel" es de español, de inglés o
+// la certificación TEFL; "pais" es la nacionalidad en Spanish TEFL.
+export const LANDING_DETALLE_LABEL: Record<
+  (typeof LANDING_PROGRAMAS_CONSULTA)[number],
+  Partial<Record<'nivel' | 'pais', string>>
+> = {
+  'Spanish Immersion': { nivel: 'Nivel de español' },
+  'TEFL England': { nivel: 'Nivel de inglés' },
+  'Spanish TEFL': { nivel: 'Certificación TEFL', pais: 'Nacionalidad' },
 };
