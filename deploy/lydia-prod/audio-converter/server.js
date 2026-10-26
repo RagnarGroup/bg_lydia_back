@@ -16,6 +16,7 @@ const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
+const { rewriteOpusTagsVendor } = require('./opus-tags');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -54,6 +55,9 @@ async function resolveInputBuffer(req) {
 // Mono, 16kHz, libopus -- espec de nota de voz de WhatsApp (Meta solo la
 // renderiza como voice note con audio/ogg de codec opus; cualquier otro
 // mimetype de audio, aunque reproducible, cae a adjunto de archivo generico).
+// LYD-111: sin metadata/capitulos, bitrate de voz (las nativas rondan los
+// 18-24 kbps; el default de libopus daba ~78 kbps) y vendor "WhatsApp" en el
+// OpusTags -- con el vendor de ffmpeg el movil no la reproduce.
 function convertToVoiceNote(buffer) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -61,11 +65,13 @@ function convertToVoiceNote(buffer) {
       .audioCodec('libopus')
       .audioChannels(1)
       .audioFrequency(16000)
+      .audioBitrate('24k')
+      .outputOptions(['-application', 'voip', '-map_metadata', '-1', '-map_chapters', '-1'])
       .toFormat('ogg')
       .on('error', (err) => reject(new Error(`ffmpeg fallo: ${err.message}`)))
       .pipe();
     output.on('data', (chunk) => chunks.push(chunk));
-    output.on('end', () => resolve(Buffer.concat(chunks)));
+    output.on('end', () => resolve(rewriteOpusTagsVendor(Buffer.concat(chunks))));
   });
 }
 

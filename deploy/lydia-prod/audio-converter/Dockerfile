@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 
-COPY server.js ./
+COPY server.js opus-tags.js ./
 
 EXPOSE 4040
 CMD ["node", "server.js"]
