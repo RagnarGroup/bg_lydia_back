@@ -4,6 +4,7 @@ import { LeadActivityType, LeadStage, LeadVisitStatus, Prisma } from '@prisma/cl
 
 import {
   LANDING_DEFAULT_TAG,
+  LANDING_NIVEL_LABEL,
   LANDING_PROGRAMAS,
   LANDING_PROGRAMAS_CONSULTA,
   LANDING_SEDE_CIUDAD,
@@ -84,12 +85,13 @@ export type LandingConsultaBody = {
 };
 
 // Orden y etiqueta de cada dato de la consulta en las observaciones del lead.
+// La de "nivel" se reemplaza por la del programa (LANDING_NIVEL_LABEL).
 const DETALLE_FIELDS: [keyof NonNullable<LandingConsultaBody['detalle']>, string, number][] = [
   ['opcion', 'Opción', 80],
   ['precio', 'Precio', 30],
   ['mesInicio', 'Mes de inicio', 30],
   ['pais', 'País', 80],
-  ['nivel', 'Nivel de español', 30],
+  ['nivel', 'Nivel', 30],
 ];
 
 export class LandingLeadsService {
@@ -714,9 +716,12 @@ export class LandingLeadsService {
     const tags = this.optionalTags(body.tags);
     const attribution = this.optionalAttribution(body.attribution);
     const detalle = this.optionalDetalle(body.detalle);
+    const nivelLabel = LANDING_NIVEL_LABEL[programa as keyof typeof LANDING_NIVEL_LABEL];
     const observations =
       [
-        ...DETALLE_FIELDS.map(([key, label]) => (detalle?.[key] ? `${label}: ${detalle[key]}` : null)),
+        ...DETALLE_FIELDS.map(([key, label]) =>
+          detalle?.[key] ? `${key === 'nivel' ? nivelLabel : label}: ${detalle[key]}` : null,
+        ),
         pageUrl ? `Origen: ${pageUrl}` : null,
       ]
         .filter(Boolean)

@@ -113,6 +113,35 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     service = new LandingLeadsService(db as any);
   });
 
+  it('acepta TEFL England (LYD-107) con WhatsApp y el nivel como nivel de inglés', async () => {
+    const r = await service.createFromLanding(
+      consulta({
+        programa: 'TEFL England',
+        correo: 'maria@example.com',
+        whatsapp: '987654321',
+        tags: ['TEFL_ENGLAND'],
+        attribution: { utm_source: 'facebook' },
+        detalle: { opcion: 'Prácticas: Arequipa', precio: 'S/ 2,600', nivel: 'C1' },
+        externalId: 'tefl-england:sub-1',
+      }),
+    );
+    assert.equal(r.created, true);
+    const lead = db.leads[0];
+    assert.equal(lead.programa, 'TEFL England');
+    assert.equal(lead.phone, '987654321');
+    assert.deepEqual(lead.tags, ['TEFL_ENGLAND']);
+    assert.equal(lead.observations, 'Opción: Prácticas: Arequipa · Precio: S/ 2,600 · Nivel de inglés: C1');
+  });
+
+  it('un mismo correo en Spanish Immersion y en TEFL England son dos leads distintos', async () => {
+    await service.createFromLanding(consulta({ correo: 'ana@example.com' }));
+    const r = await service.createFromLanding(
+      consulta({ programa: 'TEFL England', correo: 'ana@example.com', tags: ['TEFL_ENGLAND'] }),
+    );
+    assert.equal(r.created, true);
+    assert.equal(db.leads.length, 2);
+  });
+
   it('crea el lead sin sede ni visita, con el correo en minúsculas y el detalle legible', async () => {
     const r = await service.createFromLanding(consulta({ externalId: 'sub-1' }));
     assert.equal(r.created, true);
