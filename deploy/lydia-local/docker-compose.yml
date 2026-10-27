@@ -1,0 +1,140 @@
+name: lydia-local
+
+# LYD-119: entorno de DESARROLLO LOCAL de Lydia. Mismo stack que
+# deploy/lydia-prod/docker-compose.yml (Postgres, Redis, audio-converter y
+# evolution-api buildeado desde este repo), pero:
+#   - todo en 127.0.0.1 de la PC, con contenedores, volumenes y red propios
+#     (prefijo lydia_local_), nada compartido con produccion;
+#   - base vacia: se llena con seed.mjs, nunca con una copia de prod (la
+#     instancia de prod guarda el token de Meta y la base tiene datos de
+#     clientes);
+#   - sin canales reales: los mensajes entrantes se simulan con
+#     simulate-message.mjs (webhook de Meta firmado con el APP_SECRET local);
+#   - apagados: auditoria comercial, SMTP, TikTok y codex bridge.
+#
+# El frontend (lydia_bg_front) no va en este compose: corre con `npm run dev`
+# en la PC, apuntando a http://localhost:8091. Ver README.md.
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: lydia_local_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_DATABASE_PASSWORD}
+      # La base de Evolution directo, sin init-databases.sh de prod: en un
+      # checkout de Windows ese script queda con CRLF y bash no lo ejecuta.
+      POSTGRES_DB: evolution
+    # 5433 en el host para no chocar con un Postgres local; util para
+    # `npx prisma studio` o un cliente SQL.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      lydia_local_net:
+        aliases:
+          - db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: lydia_local_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    networks:
+      lydia_local_net:
+        aliases:
+          - redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  audio-converter:
+    build:
+      context: ../lydia-prod/audio-converter
+    image: lydia-audio-converter:local
+    container_name: lydia_local_audio_converter
+    restart: unless-stopped
+    environment:
+      API_AUDIO_CONVERTER_KEY: ${API_AUDIO_CONVERTER_KEY}
+    networks:
+      - lydia_local_net
+
+  evolution-api:
+    build:
+      context: ../..
+    image: lydia-evolution-api:local
+    container_name: lydia_local_evolution_api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8091:8080"
+    environment:
+      TZ: America/Lima
+      SERVER_URL: http://localhost:8091
+      SERVER_PORT: 8080
+      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY}
+      AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES: "true"
+
+      DATABASE_PROVIDER: postgresql
+      DATABASE_CONNECTION_URI: postgresql://postgres:${PG_DATABASE_PASSWORD}@db:5432/evolution?schema=public
+      DATABASE_CLIENT_NAME: evolution_whatsapp
+
+      CACHE_REDIS_ENABLED: "true"
+      CACHE_REDIS_URI: redis://:${REDIS_PASSWORD}@redis:6379/1
+      CACHE_REDIS_PREFIX_KEY: evolution
+      CACHE_LOCAL_ENABLED: "false"
+
+      LOG_LEVEL: ERROR,WARN,DEBUG,INFO,LOG
+      LOG_COLOR: "true"
+      LOG_BAILEYS: error
+
+      CHATWOOT_ENABLED: "false"
+
+      # Canal WhatsApp Cloud API simulado: simulate-message.mjs firma el
+      # webhook con este mismo APP_SECRET, igual que lo haria Meta.
+      WA_BUSINESS_TOKEN_WEBHOOK: ${WA_BUSINESS_TOKEN_WEBHOOK}
+      WA_BUSINESS_APP_SECRET: ${WA_BUSINESS_APP_SECRET}
+      WA_BUSINESS_VERSION: v23.0
+      WA_BUSINESS_LANGUAGE: es
+
+      LANDING_WEBHOOK_TOKEN: ${LANDING_WEBHOOK_TOKEN:-}
+
+      CONFIG_SESSION_PHONE_CLIENT: "Brittany Chat (local)"
+      CONFIG_SESSION_PHONE_NAME: Chrome
+
+      API_AUDIO_CONVERTER: http://audio-converter:4040/process-audio
+      API_AUDIO_CONVERTER_KEY: ${API_AUDIO_CONVERTER_KEY}
+
+      COMMERCIAL_AUDIT_ENABLED: "false"
+      LYDIA_FRONT_URL: http://localhost:3000
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - lydia_local_net
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+    name: lydia_local_pg_data
+  redis_data:
+    name: lydia_local_redis_data
+  evolution_instances:
+    name: lydia_local_evolution_instances
+
+networks:
+  lydia_local_net:
+    name: lydia_local_net

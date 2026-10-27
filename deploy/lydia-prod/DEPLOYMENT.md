@@ -11,10 +11,12 @@ el repo "ancla" de la stack (Postgres/Redis/Evolution API).
 
 ## Entorno
 
-Solo existe producción. No hay `development` para Lydia todavía — los
-workflows de `lydia_bg_back` y `lydia_bg_front` rechazan cualquier rama que
-no sea `main` en vez de caer a un entorno de desarrollo (no hay ninguno al
-que caer).
+Solo existe producción en el VPS. No hay `development` desplegado para
+Lydia — los workflows de `lydia_bg_back` y `lydia_bg_front` rechazan
+cualquier rama que no sea `main` en vez de caer a un entorno de desarrollo
+(no hay ninguno al que caer). Para probar cambios, el entorno local de
+`deploy/lydia-local/` (ver su README.md) levanta el mismo stack en la PC,
+con base vacía y mensajes entrantes simulados.
 
 |                    | producción |
 | ------------------ | --- |
