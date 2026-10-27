@@ -34,6 +34,11 @@ export class CrmController {
     return this.messageAuthorService.getMessageDetails(messageId);
   }
 
+  // LYD-117
+  public async getChatParticipants(chatId: string) {
+    return this.messageAuthorService.getChatParticipants(chatId);
+  }
+
   public async listConversations(query: {
     instanceName?: string;
     status?: ChatStatus;

@@ -119,7 +119,7 @@ export const messageAuthorService = new MessageAuthorService(prismaRepository);
 export const crmController = new CrmController(crmService, suggestReplyService, messageAuthorService);
 export const agentController = new AgentController(agentKnowledgeService, suggestReplyService);
 
-const leadsService = new LeadsService(prismaRepository);
+const leadsService = new LeadsService(prismaRepository, messageAuthorService);
 export const leadsController = new LeadsController(leadsService);
 
 const landingLeadsService = new LandingLeadsService(prismaRepository);

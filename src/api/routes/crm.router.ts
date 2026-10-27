@@ -116,6 +116,10 @@ export class CrmRouter {
       .post('/conversations/:chatId/agent-chat', async (req, res) => {
         return res.json(await crmController.agentChat(req.params.chatId, { messages: req.body?.messages }));
       })
+      // LYD-117: asesoras que escribieron en la conversacion (no solo el responsable).
+      .get('/conversations/:chatId/participants', async (req, res) => {
+        return res.json(await crmController.getChatParticipants(req.params.chatId));
+      })
       .get('/conversations/:chatId/notes', async (req, res) => {
         return res.json(await crmController.listNotes(req.params.chatId));
       })
