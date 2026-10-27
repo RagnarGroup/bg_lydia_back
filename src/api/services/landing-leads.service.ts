@@ -89,6 +89,7 @@ export type LandingConsultaBody = {
     mesInicio?: string;
     pais?: string;
     nivel?: string;
+    sede?: string;
     mensaje?: string;
   };
 };
@@ -101,6 +102,9 @@ const DETALLE_FIELDS: [keyof NonNullable<LandingConsultaBody['detalle']>, string
   ['mesInicio', 'Mes de inicio', 30],
   ['pais', 'País', 80],
   ['nivel', 'Nivel', 30],
+  // LYD-112: sede que eligió la persona en el sitio principal (texto libre de
+  // la página, no una de LANDING_SEDES: la consulta no tiene visita).
+  ['sede', 'Sede', 80],
   // LYD-108: lo que la persona escribió en el formulario.
   ['mensaje', 'Mensaje', 1000],
 ];

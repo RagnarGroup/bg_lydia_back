@@ -67,10 +67,15 @@ function fakePrisma() {
         return row;
       },
       findFirst: async ({ where }: Row) => {
-        const a = activities.find(
-          (x) => x.type === where.type && x.meta?.[where.meta.path[0]] === where.meta.equals,
-        );
-        return a ? { Lead: pick(leads.find((l) => l.id === a.leadId), { id: 1, leadNumber: 1 }) } : null;
+        const a = activities.find((x) => x.type === where.type && x.meta?.[where.meta.path[0]] === where.meta.equals);
+        return a
+          ? {
+              Lead: pick(
+                leads.find((l) => l.id === a.leadId),
+                { id: 1, leadNumber: 1 },
+              ),
+            }
+          : null;
       },
     },
   };
@@ -180,6 +185,31 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     );
   });
 
+  it('acepta el sitio principal (LYD-112) con el curso como interés y la sede elegida', async () => {
+    const r = await service.createFromLanding(
+      consulta({
+        programa: 'Principal',
+        correo: 'rosa@example.com',
+        whatsapp: '987654321',
+        tags: ['PRINCIPAL'],
+        detalle: {
+          opcion: 'Inglés Teens',
+          sede: 'Brittany Cayma',
+          mensaje: 'Formulario: Pre-inscripción',
+        },
+        externalId: 'principal:sub-1',
+      }),
+    );
+    assert.equal(r.created, true);
+    const lead = db.leads[0];
+    assert.equal(lead.programa, 'Principal');
+    assert.equal(lead.sede, null);
+    assert.equal(
+      lead.observations,
+      'Interés: Inglés Teens · Sede: Brittany Cayma · Mensaje: Formulario: Pre-inscripción',
+    );
+  });
+
   it('rechaza un mensaje de más de 1000 caracteres', async () => {
     await rejectsWith(
       service.createFromLanding(consulta({ programa: 'Spanish TEFL', detalle: { mensaje: 'x'.repeat(1001) } })),
@@ -260,7 +290,8 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
     await rejectsWith(service.createFromLanding(consulta({ correo: 'no-es-email' })), /not a valid email/);
     await rejectsWith(service.createFromLanding(consulta({ programa: 'Adultos' })), /programa must be one of/);
     await rejectsWith(service.createFromLanding(consulta({ nombre: '  ' })), /nombre is required/);
-    await rejectsWith(service.createFromLanding(consulta({ detalle: { pais: 'x'.repeat(81) } })),
+    await rejectsWith(
+      service.createFromLanding(consulta({ detalle: { pais: 'x'.repeat(81) } })),
       /detalle\.pais must be at most 80/,
     );
     await rejectsWith(service.createFromLanding(consulta({ tags: ['minusculas'] })), /each tag must match/);
@@ -268,7 +299,8 @@ describe('LandingLeadsService · consultas sin visita (LYD-100)', () => {
   });
 
   it('sin tipo "consulta" se mantiene el flujo de visitas: exige sede, fecha y hora', async () => {
-    await rejectsWith(service.createFromLanding({
+    await rejectsWith(
+      service.createFromLanding({
         programa: 'Adultos',
         nombre: 'Ana',
         whatsapp: '999999999',
