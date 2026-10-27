@@ -116,7 +116,7 @@ export class CrmRouter {
       .post('/conversations/:chatId/agent-chat', async (req, res) => {
         return res.json(await crmController.agentChat(req.params.chatId, { messages: req.body?.messages }));
       })
-      // LYD-117: asesoras que escribieron en la conversacion (no solo el responsable).
+      // LYD-117: porcentaje de participacion de cada asesora (ultima auditoria diaria).
       .get('/conversations/:chatId/participants', async (req, res) => {
         return res.json(await crmController.getChatParticipants(req.params.chatId));
       })

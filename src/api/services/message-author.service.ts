@@ -1,9 +1,7 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { Logger } from '@config/logger.config';
 import { BadRequestException, NotFoundException } from '@exceptions';
-import { MessageAuthorKind, Prisma } from '@prisma/client';
-
-import { ChatParticipant, groupParticipants, ParticipantRow } from './chat-participants.util';
+import { MessageAuthorKind } from '@prisma/client';
 
 // LYD-101: autoria de los mensajes salientes. Evolution guarda todo lo que
 // sale como fromMe=true, sin distinguir asesora, bot o bienvenida; esta tabla
@@ -87,43 +85,6 @@ export class MessageAuthorService {
       agent: author?.Agent ?? null,
       delivery: fromMe ? deliveryStatus([message.status, ...message.MessageUpdate.map((u) => u.status)]) : null,
     };
-  }
-
-  // LYD-117: asesoras que enviaron mensajes en cada chat. Parte de Chat (pocos
-  // ids) y usa el indice (instanceId, remoteJid, messageTimestamp) de Message
-  // y el unico (instanceId, messageKeyId) de MessageAuthor. Lo enviado antes
-  // de LYD-101 o desde el celular no tiene autora y no cuenta.
-  public async listChatParticipants(chatIds: string[]): Promise<Map<string, ChatParticipant[]>> {
-    const ids = [...new Set(chatIds.filter(Boolean))];
-    if (ids.length === 0) return new Map();
-
-    const rows = await this.prisma.$queryRaw<ParticipantRow[]>`
-      SELECT c.id AS "chatId", ma."agentId", COUNT(*)::int AS messages,
-        MIN(m."messageTimestamp")::int AS "firstAt", MAX(m."messageTimestamp")::int AS "lastAt"
-      FROM "Chat" c
-      JOIN "Message" m ON m."instanceId" = c."instanceId" AND m.key->>'remoteJid' = c."remoteJid"
-      JOIN "MessageAuthor" ma ON ma."instanceId" = m."instanceId" AND ma."messageKeyId" = m.key->>'id'
-      WHERE c.id IN (${Prisma.join(ids)})
-        AND m.key->>'fromMe' = 'true'
-        AND ma.kind = 'asesora'::"MessageAuthorKind"
-        AND ma."agentId" IS NOT NULL
-      GROUP BY 1, 2
-    `;
-    if (rows.length === 0) return new Map();
-
-    const agents = await this.prisma.agent.findMany({
-      where: { id: { in: [...new Set(rows.map((row) => row.agentId))] } },
-      select: { id: true, name: true, email: true, color: true },
-    });
-    return groupParticipants(rows, agents);
-  }
-
-  public async getChatParticipants(chatId: string) {
-    const chat = await this.prisma.chat.findUnique({ where: { id: chatId }, select: { id: true } });
-    if (!chat) {
-      throw new NotFoundException(`Conversation "${chatId}" not found`);
-    }
-    return (await this.listChatParticipants([chatId])).get(chatId) ?? [];
   }
 
   // Idempotente: reintentar el registro de un mismo mensaje no duplica ni

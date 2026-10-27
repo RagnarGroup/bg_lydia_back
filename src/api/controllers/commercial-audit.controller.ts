@@ -8,6 +8,11 @@ export class CommercialAuditController {
     return this.service.startRun(date);
   }
 
+  // LYD-117
+  public startParticipation(reportDate: string) {
+    return this.service.startParticipation(reportDate);
+  }
+
   public getRun(reportDate: string) {
     return this.service.getRun(reportDate);
   }

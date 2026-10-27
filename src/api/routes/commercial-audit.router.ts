@@ -21,6 +21,10 @@ export class CommercialAuditRouter {
       .get('/runs/:date/html', async (req, res) => {
         return res.type('html').send(await commercialAuditController.getRunHtml(req.params.date));
       })
+      // LYD-117: recalcula solo el porcentaje de participacion de un dia ya auditado.
+      .post('/runs/:date/participation', async (req, res) => {
+        return res.status(202).json(await commercialAuditController.startParticipation(req.params.date));
+      })
       // `to` opcional: manda solo a esas direcciones (piloto) sin marcar la corrida como enviada.
       .post('/runs/:date/send', async (req, res) => {
         return res.json(await commercialAuditController.sendRun(req.params.date, req.body?.to));

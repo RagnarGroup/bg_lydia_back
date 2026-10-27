@@ -1,3 +1,4 @@
+import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { CrmService } from '@api/services/crm.service';
 import { normalizeListLimit, parseChannel } from '@api/services/crm-conversations.util';
 import { CrmSuggestReplyService } from '@api/services/crm-suggest-reply.service';
@@ -9,6 +10,7 @@ export class CrmController {
     private readonly crmService: CrmService,
     private readonly suggestReplyService: CrmSuggestReplyService,
     private readonly messageAuthorService: MessageAuthorService,
+    private readonly participationService: ConversationParticipationService,
   ) {}
 
   public async listAgents() {
@@ -36,7 +38,7 @@ export class CrmController {
 
   // LYD-117
   public async getChatParticipants(chatId: string) {
-    return this.messageAuthorService.getChatParticipants(chatId);
+    return this.participationService.getForChat(chatId);
   }
 
   public async listConversations(query: {
