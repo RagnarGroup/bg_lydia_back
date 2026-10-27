@@ -1,4 +1,5 @@
 import { PrismaRepository } from '@api/repository/repository.service';
+import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
 import { LeadActivityType, LeadStage, Prisma } from '@prisma/client';
 
@@ -21,11 +22,16 @@ export async function nextLeadNumber(tx: Pick<Prisma.TransactionClient, 'lead'>)
 // extension de Chat) porque puede existir sin conversacion de WhatsApp
 // todavia (carga manual, ver Lead.chatId opcional en el schema).
 export class LeadsService {
-  constructor(private readonly prisma: PrismaRepository) {}
+  constructor(
+    private readonly prisma: PrismaRepository,
+    private readonly participationService: ConversationParticipationService,
+  ) {}
 
+  // LYD-117: cada lead trae `participants`, el porcentaje de participacion de
+  // cada asesora segun la ultima auditoria diaria (ademas del responsable).
   public async listLeads(params: { stage?: LeadStage; assignedAgentId?: string; source?: string; chatId?: string }) {
     const { stage, assignedAgentId, source, chatId } = params;
-    return this.prisma.lead.findMany({
+    const leads = await this.prisma.lead.findMany({
       where: {
         ...(stage ? { stage } : {}),
         ...(assignedAgentId ? { assignedAgentId } : {}),
@@ -37,6 +43,10 @@ export class LeadsService {
       include: { Agent: true, Chat: true },
       orderBy: { createdAt: 'desc' },
     });
+    const participants = await this.participationService.listByChat(
+      leads.map((lead) => lead.chatId).filter((id): id is string => Boolean(id)),
+    );
+    return leads.map((lead) => ({ ...lead, participants: (lead.chatId && participants.get(lead.chatId)) || [] }));
   }
 
   public async getLead(id: string) {

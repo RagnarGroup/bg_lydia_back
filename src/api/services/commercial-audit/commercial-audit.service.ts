@@ -5,6 +5,14 @@ import { MessageAuthorKind, Prisma } from '@prisma/client';
 import cron from 'node-cron';
 
 import { AuditMailer } from './audit-mailer';
+import {
+  buildParticipationPrompt,
+  normalizePercents,
+  parseParticipation,
+  participantLabel,
+  ParticipationCase,
+  ParticipationLine,
+} from './audit-participation';
 import { buildAuditReportHtml, escapeHtml, ReportAudit } from './audit-report';
 import { AuditLevel, CRITERIA, LEVELS, points } from './audit-rubric';
 import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } from './audit-text';
@@ -17,6 +25,8 @@ import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } fro
 // - 22:00: manda el reporte a Direccion. Si la evaluacion termina despues, se
 //   manda apenas termina.
 // - 23:30: si todavia no salio, aviso de "reporte no generado".
+// - LYD-117: en la misma corrida de las 21:00, porcentaje de participacion de
+//   cada asesora en las conversaciones del dia (ConversationParticipation).
 
 const TIMEZONE = 'America/Lima';
 // Peru no tiene horario de verano: UTC-5 fijo.
@@ -146,6 +156,26 @@ export class CommercialAuditService {
     return { reportDate, status: 'running' };
   }
 
+  // LYD-117: recalcula solo la participacion de un dia ya auditado (dias
+  // anteriores a esta funcion o reproceso). No toca la auditoria ni envia nada.
+  public async startParticipation(reportDate: string) {
+    const run = await this.prisma.commercialAuditRun.findUnique({
+      where: { reportDate },
+      select: { id: true, windowStart: true, windowEnd: true },
+    });
+    if (!run) throw new NotFoundException(`No hay corrida para ${reportDate}`);
+    const key = `participacion:${reportDate}`;
+    if (this.inFlight.has(key)) {
+      throw new BadRequestException(`Ya se esta calculando la participacion de ${reportDate}`);
+    }
+    this.inFlight.add(key);
+    this.computeParticipation(run.id, run.windowStart, run.windowEnd)
+      .then((chats) => this.logger.info(`Participacion ${reportDate}: ${chats} conversaciones`))
+      .catch((error) => this.logger.error(`Participacion ${reportDate} fallo: ${error}`))
+      .finally(() => this.inFlight.delete(key));
+    return { reportDate, status: 'running' };
+  }
+
   public async getRun(reportDate: string) {
     const run = await this.prisma.commercialAuditRun.findUnique({
       where: { reportDate },
@@ -220,6 +250,11 @@ export class CommercialAuditService {
           evaluated++;
         }
       }
+
+      // El reporte no depende de la participacion: si falla, se registra y sigue.
+      await this.computeParticipation(run.id, windowStart, windowEnd).catch((error) =>
+        this.logger.error(`Participacion ${reportDate} fallo: ${error}`),
+      );
 
       const html = await this.buildReport(
         run.id,
@@ -507,6 +542,117 @@ export class CommercialAuditService {
         } as Prisma.InputJsonValue,
       },
     });
+  }
+
+  // ---------- Participacion (LYD-117) ----------
+
+  // Conversaciones donde escribio una asesora en la ventana. Con una sola
+  // asesora en el historial es 100% sin consultar a la IA; con varias, la IA
+  // reparte el 100% por aporte real.
+  private async computeParticipation(runId: string, windowStart: number, windowEnd: number): Promise<number> {
+    await this.prisma.conversationParticipation.deleteMany({ where: { runId } });
+
+    const chats = await this.prisma.$queryRaw<{ instanceId: string; remoteJid: string }[]>`
+      SELECT DISTINCT m."instanceId", m.key->>'remoteJid' AS "remoteJid"
+      FROM "Message" m
+      JOIN "MessageAuthor" ma
+        ON ma."instanceId" = m."instanceId" AND ma."messageKeyId" = m.key->>'id'
+      WHERE m."messageTimestamp" >= ${windowStart} AND m."messageTimestamp" < ${windowEnd}
+        AND m.key->>'fromMe' = 'true'
+        AND m.key->>'remoteJid' NOT LIKE '%@g.us'
+        AND ma.kind = 'asesora'::"MessageAuthorKind"
+        AND ma."agentId" IS NOT NULL
+    `;
+
+    const pending: { chatId: string; agents: string[]; case: ParticipationCase }[] = [];
+    let saved = 0;
+    for (const { instanceId, remoteJid } of chats) {
+      const chat = await this.prisma.chat.findUnique({
+        where: { instanceId_remoteJid: { instanceId, remoteJid } },
+        select: { id: true, name: true, contactNameOverride: true, Lead: { select: { contactName: true } } },
+      });
+      if (!chat) continue;
+
+      const history = await this.loadHistory(instanceId, remoteJid, windowEnd);
+      const agents: string[] = [];
+      for (const m of history.messages) {
+        if (m.authorKind === MessageAuthorKind.asesora && m.authorAgentId && !agents.includes(m.authorAgentId)) {
+          agents.push(m.authorAgentId);
+        }
+      }
+      if (agents.length === 0) continue;
+      if (agents.length === 1) {
+        await this.prisma.conversationParticipation.create({
+          data: { runId, chatId: chat.id, agentId: agents[0], percent: 100 },
+        });
+        saved++;
+        continue;
+      }
+
+      const contact = await this.prisma.contact.findFirst({
+        where: { instanceId, remoteJid },
+        select: { pushName: true },
+      });
+      const tokens = nameTokens([
+        chat.name,
+        chat.contactNameOverride,
+        chat.Lead?.contactName,
+        contact?.pushName,
+        ...history.clientPushNames,
+      ]);
+      const labels = agents.map((_, i) => participantLabel(i));
+      const lines: ParticipationLine[] = history.messages.map((m) => {
+        const base = { at: formatLima(m.at), text: anonymize(m.text, tokens) };
+        if (!m.fromMe) return { ...base, speaker: 'cliente' };
+        if (m.authorKind === MessageAuthorKind.bot || m.authorKind === MessageAuthorKind.bienvenida) {
+          return { ...base, speaker: 'bot' };
+        }
+        if (m.authorKind === MessageAuthorKind.asesora && m.authorAgentId) {
+          return { ...base, speaker: 'asesora', label: labels[agents.indexOf(m.authorAgentId)] };
+        }
+        return { ...base, speaker: 'sin_atribuir' };
+      });
+      pending.push({ chatId: chat.id, agents, case: { ref: `P${pending.length + 1}`, labels, lines } });
+    }
+
+    for (let i = 0; i < pending.length; i += BATCH_SIZE) {
+      const batch = pending.slice(i, i + BATCH_SIZE);
+      const results = await this.evaluateParticipation(batch.map((p) => p.case));
+      for (const item of batch) {
+        const result = results.get(item.case.ref);
+        if (!result) continue;
+        const percents = normalizePercents(item.case.labels, result.porcentajes);
+        await this.prisma.conversationParticipation.createMany({
+          data: item.agents.map((agentId, idx) => ({
+            runId,
+            chatId: item.chatId,
+            agentId,
+            percent: percents[item.case.labels[idx]],
+            reason: result.motivo,
+          })),
+        });
+        saved++;
+      }
+    }
+    return saved;
+  }
+
+  private async evaluateParticipation(cases: ParticipationCase[]) {
+    const results = new Map<string, { porcentajes: Record<string, number>; motivo: string | null }>();
+    try {
+      for (const r of parseParticipation(await this.askBridge(buildParticipationPrompt(cases)))) results.set(r.id, r);
+    } catch (error) {
+      this.logger.error(`Lote de participacion fallo (${cases.map((c) => c.ref).join(', ')}): ${error}`);
+    }
+    for (const single of cases.filter((c) => !results.has(c.ref))) {
+      try {
+        const [r] = parseParticipation(await this.askBridge(buildParticipationPrompt([single])));
+        if (r) results.set(single.ref, r);
+      } catch (error) {
+        this.logger.error(`No se pudo calcular la participacion de ${single.ref}: ${error}`);
+      }
+    }
+    return results;
   }
 
   // ---------- Reporte ----------

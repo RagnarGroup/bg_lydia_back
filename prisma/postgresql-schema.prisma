@@ -261,6 +261,7 @@ model Agent {
   LeadActivity  LeadActivity[]
   MessageAuthor MessageAuthor[]
   ConversationAudit ConversationAudit[]
+  ConversationParticipation ConversationParticipation[]
 }
 
 // LYD-101: autoria de los mensajes salientes, en tabla propia para no tocar
@@ -1154,6 +1155,7 @@ model CommercialAuditRun {
   createdAt     DateTime              @default(now()) @db.Timestamp
   updatedAt     DateTime              @updatedAt @db.Timestamp
   Audits        ConversationAudit[]
+  Participations ConversationParticipation[]
 }
 
 // Una fila por (conversacion, asesora) evaluada en la corrida. Los puntajes
@@ -1180,4 +1182,22 @@ model ConversationAudit {
 
   @@index([runId])
   @@index([agentId, createdAt])
+}
+
+// LYD-117: porcentaje de participacion de cada asesora en una conversacion,
+// lo asigna la IA en la auditoria diaria segun el aporte real (no la cantidad
+// de mensajes). El lead muestra el de la corrida mas reciente.
+model ConversationParticipation {
+  id        String             @id @default(cuid())
+  Run       CommercialAuditRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  runId     String
+  chatId    String
+  Agent     Agent              @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  agentId   String
+  percent   Int
+  reason    String?            @db.Text
+  createdAt DateTime           @default(now()) @db.Timestamp
+
+  @@unique([runId, chatId, agentId])
+  @@index([chatId])
 }

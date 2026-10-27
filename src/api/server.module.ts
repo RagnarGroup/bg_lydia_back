@@ -56,6 +56,7 @@ import { CacheService } from './services/cache.service';
 import { CalendarEventsService } from './services/calendar-events.service';
 import { AuditMailer } from './services/commercial-audit/audit-mailer';
 import { CommercialAuditService } from './services/commercial-audit/commercial-audit.service';
+import { ConversationParticipationService } from './services/conversation-participation.service';
 import { CrmService } from './services/crm.service';
 import { CrmSuggestReplyService } from './services/crm-suggest-reply.service';
 import { InsightsService } from './services/insights.service';
@@ -116,10 +117,16 @@ const agentKnowledgeService = new AgentKnowledgeService(prismaRepository);
 const suggestReplyService = new CrmSuggestReplyService(prismaRepository, agentKnowledgeService);
 // LYD-101: exportado para que los canales registren bot y bienvenida.
 export const messageAuthorService = new MessageAuthorService(prismaRepository);
-export const crmController = new CrmController(crmService, suggestReplyService, messageAuthorService);
+const participationService = new ConversationParticipationService(prismaRepository);
+export const crmController = new CrmController(
+  crmService,
+  suggestReplyService,
+  messageAuthorService,
+  participationService,
+);
 export const agentController = new AgentController(agentKnowledgeService, suggestReplyService);
 
-const leadsService = new LeadsService(prismaRepository);
+const leadsService = new LeadsService(prismaRepository, participationService);
 export const leadsController = new LeadsController(leadsService);
 
 const landingLeadsService = new LandingLeadsService(prismaRepository);
