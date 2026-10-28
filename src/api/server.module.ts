@@ -112,12 +112,12 @@ export const chatwootController = new ChatwootController(chatwootService, config
 const settingsService = new SettingsService(waMonitor);
 export const settingsController = new SettingsController(settingsService);
 
-const crmService = new CrmService(prismaRepository);
+const participationService = new ConversationParticipationService(prismaRepository);
+const crmService = new CrmService(prismaRepository, participationService);
 const agentKnowledgeService = new AgentKnowledgeService(prismaRepository);
 const suggestReplyService = new CrmSuggestReplyService(prismaRepository, agentKnowledgeService);
 // LYD-101: exportado para que los canales registren bot y bienvenida.
 export const messageAuthorService = new MessageAuthorService(prismaRepository);
-const participationService = new ConversationParticipationService(prismaRepository);
 export const crmController = new CrmController(
   crmService,
   suggestReplyService,
@@ -138,7 +138,7 @@ export const calendarEventsController = new CalendarEventsController(calendarEve
 const templatesService = new TemplatesService(prismaRepository);
 export const templatesController = new TemplatesController(templatesService);
 
-const insightsService = new InsightsService(prismaRepository);
+const insightsService = new InsightsService(prismaRepository, participationService);
 export const insightsController = new InsightsController(insightsService);
 
 export const botService = new BotService(prismaRepository);

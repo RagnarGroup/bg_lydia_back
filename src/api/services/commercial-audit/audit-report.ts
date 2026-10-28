@@ -26,6 +26,9 @@ export interface ReportAudit {
     motivoNoAplica: string | null;
   };
   Agent: { id: string; name: string; sedes: string[] } | null;
+  // LYD-123: participacion de la asesora en el chat y peso en sus promedios.
+  percent: number | null;
+  weight: number;
 }
 
 interface ReportInput {
@@ -33,10 +36,11 @@ interface ReportInput {
   windowStart: number;
   windowEnd: number;
   unattributed: number;
+  lowParticipation: number;
   failed: number;
   frontUrl: string;
   audits: ReportAudit[];
-  previous: { agentId: string | null; total: number | null }[];
+  previous: { agentId: string | null; total: number | null; weight: number }[];
 }
 
 const MISSED_LIMIT = 3;
@@ -49,7 +53,7 @@ const H2 = 'font-size:16px;color:#1e3a8a;margin:24px 0 8px;';
 export function buildAuditReportHtml(input: ReportInput): string {
   const applicable = input.audits.filter((a) => a.applicable && a.total !== null);
   const notApplicable = input.audits.length - applicable.length;
-  const approx = input.audits.filter((a) => a.attribution === 'asignada').length;
+  const partial = applicable.filter((a) => a.weight < 1).length;
   const voiceNotes = input.audits.reduce((n, a) => n + (a.result.stats?.voiceNotes ?? 0), 0);
 
   const sections = [
@@ -64,7 +68,7 @@ export function buildAuditReportHtml(input: ReportInput): string {
     applicable.length ? missedSection(applicable, input.frontUrl) : '',
     applicable.length ? pendingSection(applicable, input.frontUrl) : '',
     applicable.length ? bestSection(applicable) : '',
-    notes(approx, input.unattributed, voiceNotes),
+    notes(partial, input.lowParticipation, input.unattributed, voiceNotes),
   ];
 
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:900px;margin:0 auto;padding:16px;">${sections.join('')}</body></html>`;
@@ -75,8 +79,13 @@ function agentTable(audits: ReportAudit[], previous: ReportInput['previous']): s
   const rows = [...byAgent.values()]
     .map((list) => {
       const agent = list[0].Agent;
-      const prev = previous.filter((p) => p.agentId === agent?.id && p.total !== null).map((p) => p.total as number);
-      return { agent, list, avg: avg(list.map((a) => a.total as number)), prevAvg: prev.length ? avg(prev) : null };
+      const prev = previous.filter((p) => p.agentId === agent?.id && p.total !== null);
+      return {
+        agent,
+        list,
+        avg: weightedAvg(list, (a) => a.total as number),
+        prevAvg: prev.length ? weightedAvg(prev, (p) => p.total as number) : null,
+      };
     })
     .sort((a, b) => b.avg - a.avg);
 
@@ -88,7 +97,7 @@ function agentTable(audits: ReportAudit[], previous: ReportInput['previous']): s
           : trendBadge(total - prevAvg) + ` <span style="color:#6b7280;">(7 días: ${Math.round(prevAvg)})</span>`;
       return `<tr>
         <td style="${CELL}"><b>${escapeHtml(agent?.name ?? 'Sin asesora')}</b><br><span style="color:#6b7280;font-size:12px;">${escapeHtml((agent?.sedes ?? []).join(', ') || 'Sin sede')}</span></td>
-        <td style="${CELL}">${list.length}</td>
+        <td style="${CELL}">${conversationCount(list)}</td>
         <td style="${CELL}"><b>${Math.round(total)}</b>/100</td>
         ${criteriaCells(list)}
         <td style="${CELL}">${trend}</td>
@@ -111,12 +120,12 @@ function sedeTable(audits: ReportAudit[]): string {
     for (const sede of sedes) bySede.set(sede, [...(bySede.get(sede) ?? []), audit]);
   }
   const body = [...bySede.entries()]
-    .map(([sede, list]) => ({ sede, list, avg: avg(list.map((a) => a.total as number)) }))
+    .map(([sede, list]) => ({ sede, list, avg: weightedAvg(list, (a) => a.total as number) }))
     .sort((a, b) => b.avg - a.avg)
     .map(
       ({ sede, list, avg: total }) => `<tr>
         <td style="${CELL}"><b>${escapeHtml(sede)}</b></td>
-        <td style="${CELL}">${list.length}</td>
+        <td style="${CELL}">${conversationCount(list)}</td>
         <td style="${CELL}"><b>${Math.round(total)}</b>/100</td>
         ${criteriaCells(list)}
       </tr>`,
@@ -184,17 +193,17 @@ function bestSection(audits: ReportAudit[]): string {
     </div>`;
 }
 
-function notes(approx: number, unattributed: number, voiceNotes: number): string {
+function notes(partial: number, lowParticipation: number, unattributed: number, voiceNotes: number): string {
   const lines = [
     'Rúbrica META K-01: Loss Aversion 30 · CTA 30 · Diagnóstico 15 · Valor 15 · Ejecución 10. Cada criterio puntúa completo (100 %), parcial (50 %) o nulo (0).',
     'Los datos de los clientes están anonimizados. Las conversaciones no comerciales no cuentan en los promedios.',
+    'Cada conversación pesa en el promedio de la asesora según su participación: hasta 20 % no se evalúa, de 21 % a 39 % pesa la mitad y desde 40 % pesa completa.',
   ];
-  if (approx) {
-    lines.push(
-      `${approx} evaluaciones se atribuyeron a la asesora responsable del chat porque los mensajes no tenían autor registrado (enviados desde el celular o antes de activar el registro de autoría).`,
-    );
+  if (partial) lines.push(`${partial} evaluaciones pesaron la mitad por participación de 21 % a 39 %.`);
+  if (lowParticipation) {
+    lines.push(`${lowParticipation} participaciones de 20 % o menos no se evaluaron.`);
   }
-  if (unattributed) lines.push(`${unattributed} conversaciones con mensajes sin autor ni responsable quedaron fuera.`);
+  if (unattributed) lines.push(`${unattributed} conversaciones con mensajes sin autor registrado quedaron fuera.`);
   if (voiceNotes) lines.push(`${voiceNotes} notas de voz de asesoras no se evaluaron (todavía no se transcriben).`);
   return `<h2 style="${H2}">Notas</h2><ul style="color:#4b5563;font-size:12px;padding-left:18px;">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`;
 }
@@ -207,7 +216,7 @@ function criteriaHeads(): string {
 
 function criteriaCells(list: ReportAudit[]): string {
   return CRITERIA.map((c) => {
-    const value = avg(list.map((a) => (a[c.key as CriterionKey] as number | null) ?? 0));
+    const value = weightedAvg(list, (a) => (a[c.key as CriterionKey] as number | null) ?? 0);
     const ratio = value / c.weight;
     const color = ratio >= 0.75 ? '#166534' : ratio >= 0.4 ? '#92400e' : '#991b1b';
     return `<td style="${CELL}color:${color};">${Math.round(value)}</td>`;
@@ -231,8 +240,15 @@ function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   return map;
 }
 
-function avg(values: number[]): number {
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
+function weightedAvg<T extends { weight: number }>(items: T[], value: (item: T) => number): number {
+  const weights = items.reduce((sum, item) => sum + item.weight, 0);
+  return weights ? items.reduce((sum, item) => sum + item.weight * value(item), 0) / weights : 0;
+}
+
+// "5" o "5 (2 a mitad)" si alguna pesa la mitad por participacion parcial.
+function conversationCount(list: ReportAudit[]): string {
+  const half = list.filter((a) => a.weight < 1).length;
+  return half ? `${list.length} <span style="color:#6b7280;">(${half} a mitad)</span>` : String(list.length);
 }
 
 function formatLima(unix: number): string {

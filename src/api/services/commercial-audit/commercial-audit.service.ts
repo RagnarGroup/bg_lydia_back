@@ -7,11 +7,13 @@ import cron from 'node-cron';
 import { AuditMailer } from './audit-mailer';
 import {
   buildParticipationPrompt,
+  MIN_PARTICIPATION,
   normalizePercents,
   parseParticipation,
   participantLabel,
   ParticipationCase,
   ParticipationLine,
+  participationWeight,
 } from './audit-participation';
 import { buildAuditReportHtml, escapeHtml, ReportAudit } from './audit-report';
 import { AuditLevel, CRITERIA, LEVELS, points } from './audit-rubric';
@@ -27,6 +29,7 @@ import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } fro
 // - 23:30: si todavia no salio, aviso de "reporte no generado".
 // - LYD-117: en la misma corrida de las 21:00, porcentaje de participacion de
 //   cada asesora en las conversaciones del dia (ConversationParticipation).
+//   LYD-123: se calcula antes de evaluar y pondera los promedios del reporte.
 
 const TIMEZONE = 'America/Lima';
 // Peru no tiene horario de verano: UTC-5 fijo.
@@ -56,7 +59,6 @@ interface Candidate {
   ref: string;
   chatId: string;
   agentId: string;
-  attribution: 'exacta' | 'asignada';
   alias: string;
   leadStage: string | null;
   // LYD-115: null cuando el chat todavia no tiene lead (se evalua igual).
@@ -245,8 +247,22 @@ export class CommercialAuditService {
 
     try {
       await this.prisma.conversationAudit.deleteMany({ where: { runId: run.id } });
-      const { candidates, unattributed } = await this.collect(windowStart, windowEnd);
-      this.logger.info(`Auditoria ${reportDate}: ${candidates.length} conversaciones a evaluar`);
+
+      // LYD-123: la participacion va primero para no evaluar a quien aporto
+      // 20% o menos. Si falla, se evalua a todas (peso completo).
+      await this.computeParticipation(run.id, windowStart, windowEnd).catch((error) =>
+        this.logger.error(`Participacion ${reportDate} fallo: ${error}`),
+      );
+      const percents = await this.participationPercents([run.id]);
+      const collected = await this.collect(windowStart, windowEnd);
+      const { unattributed } = collected;
+      const candidates = collected.candidates.filter(
+        (c) => participationWeight(percents.get(participationKey(run.id, c.chatId, c.agentId))) > 0,
+      );
+      const lowParticipation = collected.candidates.length - candidates.length;
+      this.logger.info(
+        `Auditoria ${reportDate}: ${candidates.length} conversaciones a evaluar (${lowParticipation} con participacion <= ${MIN_PARTICIPATION}%)`,
+      );
 
       let evaluated = 0;
       // LYD-115: si la asesora ya marco el lead como no comercial, queda como
@@ -275,19 +291,11 @@ export class CommercialAuditService {
         }
       }
 
-      // El reporte no depende de la participacion: si falla, se registra y sigue.
-      await this.computeParticipation(run.id, windowStart, windowEnd).catch((error) =>
-        this.logger.error(`Participacion ${reportDate} fallo: ${error}`),
-      );
-
-      const html = await this.buildReport(
-        run.id,
-        reportDate,
-        windowStart,
-        windowEnd,
+      const html = await this.buildReport(run.id, reportDate, windowStart, windowEnd, {
         unattributed,
-        candidates.length - evaluated,
-      );
+        lowParticipation,
+        failed: candidates.length - evaluated,
+      });
       await this.prisma.commercialAuditRun.update({
         where: { id: run.id },
         data: { status: 'evaluated', conversations: evaluated, unattributed, html },
@@ -387,23 +395,17 @@ export class CommercialAuditService {
           id: true,
           name: true,
           contactNameOverride: true,
-          assignedAgentId: true,
           Lead: { select: { stage: true, leadType: true, contactName: true } },
         },
       });
       if (!chat) continue;
 
-      // Sin autor registrado (enviado antes de LYD-101 o desde el celular):
-      // se atribuye al responsable del chat, marcado como "asignada".
-      const targets: { agentId: string; attribution: Candidate['attribution'] }[] = [...agents].map((agentId) => ({
-        agentId,
-        attribution: 'exacta',
-      }));
-      if (!targets.length && unknown > 0) {
-        if (chat.assignedAgentId) targets.push({ agentId: chat.assignedAgentId, attribution: 'asignada' });
-        else unattributed++;
+      // LYD-123: sin autor registrado (enviado desde el celular o antes de
+      // LYD-101) la conversacion queda sin atribuir; ya no hay responsable.
+      if (!agents.size) {
+        if (unknown > 0) unattributed++;
+        continue;
       }
-      if (!targets.length) continue;
 
       const contact = await this.prisma.contact.findFirst({
         where: { instanceId, remoteJid },
@@ -418,24 +420,23 @@ export class CommercialAuditService {
         ...history.clientPushNames,
       ]);
 
-      for (const target of targets) {
+      for (const agentId of agents) {
         const lines = history.messages.map((m) => ({
           at: m.at,
           inWindow: m.at >= windowStart,
           voice: m.voice,
           text: anonymize(m.text, tokens),
-          speaker: speakerFor(m, target),
+          speaker: speakerFor(m, agentId),
         }));
         if (!lines.some((l) => l.inWindow && l.speaker === 'evaluada')) continue;
         candidates.push({
           ref: `C${candidates.length + 1}`,
           chatId: chat.id,
-          agentId: target.agentId,
-          attribution: target.attribution,
+          agentId,
           alias: clientAlias(chat.id),
           leadStage: chat.Lead?.stage ?? null,
           leadType: chat.Lead?.leadType ?? null,
-          agentSedes: agentSedes.get(target.agentId) ?? [],
+          agentSedes: agentSedes.get(agentId) ?? [],
           lines,
           stats: executionStats(lines),
         });
@@ -546,7 +547,7 @@ export class CommercialAuditService {
         runId,
         chatId: candidate.chatId,
         agentId: candidate.agentId,
-        attribution: candidate.attribution,
+        attribution: 'exacta',
         applicable,
         total,
         lossAversion: scores.lossAversion ?? null,
@@ -682,13 +683,20 @@ export class CommercialAuditService {
 
   // ---------- Reporte ----------
 
+  private async participationPercents(runIds: string[]): Promise<Map<string, number>> {
+    const rows = await this.prisma.conversationParticipation.findMany({
+      where: { runId: { in: runIds } },
+      select: { runId: true, chatId: true, agentId: true, percent: true },
+    });
+    return new Map(rows.map((r) => [participationKey(r.runId, r.chatId, r.agentId), r.percent]));
+  }
+
   private async buildReport(
     runId: string,
     reportDate: string,
     windowStart: number,
     windowEnd: number,
-    unattributed: number,
-    failed: number,
+    counts: { unattributed: number; lowParticipation: number; failed: number },
   ): Promise<string> {
     const audits = await this.prisma.conversationAudit.findMany({
       where: { runId },
@@ -701,18 +709,26 @@ export class CommercialAuditService {
         applicable: true,
         Run: { reportDate: { gte: trendFrom, lt: reportDate } },
       },
-      select: { agentId: true, total: true },
+      select: { runId: true, chatId: true, agentId: true, total: true },
     });
+
+    const percents = await this.participationPercents([runId, ...new Set(previous.map((p) => p.runId))]);
+    const percentOf = (a: { runId: string; chatId: string; agentId: string | null }) =>
+      percents.get(participationKey(a.runId, a.chatId, a.agentId)) ?? null;
 
     return buildAuditReportHtml({
       reportDate,
       windowStart,
       windowEnd,
-      unattributed,
-      failed,
+      ...counts,
       frontUrl: (process.env.LYDIA_FRONT_URL || 'https://crm.brittanygroup.edu.pe').replace(/\/$/, ''),
-      audits: audits as unknown as ReportAudit[],
-      previous,
+      audits: audits.map((a) => {
+        const percent = percentOf(a);
+        return { ...a, percent, weight: participationWeight(percent) };
+      }) as unknown as ReportAudit[],
+      previous: previous
+        .map((p) => ({ agentId: p.agentId, total: p.total, weight: participationWeight(percentOf(p)) }))
+        .filter((p) => p.weight > 0),
     });
   }
 }
@@ -721,12 +737,16 @@ export class CommercialAuditService {
 
 function speakerFor(
   m: { fromMe: boolean; authorKind: MessageAuthorKind | null; authorAgentId: string | null },
-  target: { agentId: string; attribution: Candidate['attribution'] },
+  agentId: string,
 ): Speaker {
   if (!m.fromMe) return 'cliente';
   if (m.authorKind === MessageAuthorKind.bot || m.authorKind === MessageAuthorKind.bienvenida) return 'bot';
-  if (m.authorKind === MessageAuthorKind.asesora) return m.authorAgentId === target.agentId ? 'evaluada' : 'otra';
-  return target.attribution === 'asignada' ? 'evaluada' : 'sin_atribuir';
+  if (m.authorKind === MessageAuthorKind.asesora) return m.authorAgentId === agentId ? 'evaluada' : 'otra';
+  return 'sin_atribuir';
+}
+
+function participationKey(runId: string, chatId: string, agentId: string | null): string {
+  return `${runId}|${chatId}|${agentId}`;
 }
 
 function executionStats(lines: Line[]): Candidate['stats'] {

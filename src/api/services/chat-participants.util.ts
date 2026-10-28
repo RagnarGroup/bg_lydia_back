@@ -14,7 +14,8 @@ export interface ChatParticipant {
   agent: ParticipationRow['Agent'];
   percent: number;
   reason: string | null;
-  reportDate: string;
+  // null en un lead de la landing: lo atiende quien lo tomo, al 100%.
+  reportDate: string | null;
 }
 
 // Por chat se queda con la corrida mas reciente (cada dia recalcula sobre el

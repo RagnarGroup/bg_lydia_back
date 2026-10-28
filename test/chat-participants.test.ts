@@ -6,7 +6,9 @@ import {
   buildParticipationPrompt,
   normalizePercents,
   parseParticipation,
+  participationWeight,
 } from '../src/api/services/commercial-audit/audit-participation';
+import { buildAuditReportHtml, ReportAudit } from '../src/api/services/commercial-audit/audit-report';
 import { latestParticipation } from '../src/api/services/chat-participants.util';
 
 const ana = { id: 'a1', name: 'Ana', email: 'ana@x.pe', color: '#f00' };
@@ -76,5 +78,62 @@ describe('latestParticipation', () => {
       ],
     );
     assert.equal(result.get('c2')?.[0].percent, 100);
+  });
+});
+
+describe('participationWeight (LYD-123)', () => {
+  it('hasta 20 no cuenta, 21-39 la mitad, desde 40 completa', () => {
+    assert.deepEqual([0, 20, 21, 39, 40, 100].map(participationWeight), [0, 0, 0.5, 0.5, 1, 1]);
+  });
+
+  it('sin participacion calculada cuenta completa', () => {
+    assert.equal(participationWeight(null), 1);
+    assert.equal(participationWeight(undefined), 1);
+  });
+});
+
+describe('buildAuditReportHtml ponderado (LYD-123)', () => {
+  const audit = (chatId: string, total: number, weight: number): ReportAudit => ({
+    chatId,
+    agentId: 'a1',
+    attribution: 'exacta',
+    applicable: true,
+    total,
+    lossAversion: 0,
+    cta: 0,
+    diagnostico: 0,
+    valor: 0,
+    ejecucion: 0,
+    result: {
+      alias: chatId,
+      leadStage: null,
+      stats: { avgResponseMinutes: null, lastFromClient: false, voiceNotes: 0 },
+      niveles: {},
+      evidencia: {},
+      falto: null,
+      respuestaSugerida: null,
+      mejorFrase: null,
+      motivoNoAplica: null,
+    },
+    Agent: { id: 'a1', name: 'Ana', sedes: ['Lince'] },
+    percent: weight === 1 ? 100 : 30,
+    weight,
+  });
+
+  it('la conversacion con participacion parcial pesa la mitad en el promedio', () => {
+    const html = buildAuditReportHtml({
+      reportDate: '2026-10-27',
+      windowStart: 0,
+      windowEnd: 86400,
+      unattributed: 0,
+      lowParticipation: 2,
+      failed: 0,
+      frontUrl: 'https://x',
+      audits: [audit('c1', 80, 1), audit('c2', 20, 0.5)],
+      previous: [],
+    });
+    assert.match(html, /<b>60<\/b>\/100/);
+    assert.match(html, /\(1 a mitad\)/);
+    assert.match(html, /2 participaciones de 20 % o menos no se evaluaron/);
   });
 });

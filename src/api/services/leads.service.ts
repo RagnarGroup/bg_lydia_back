@@ -1,4 +1,5 @@
 import { PrismaRepository } from '@api/repository/repository.service';
+import { ChatParticipant } from '@api/services/chat-participants.util';
 import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
 import { LeadActivityType, LeadStage, LeadType, Prisma } from '@prisma/client';
@@ -28,7 +29,7 @@ export class LeadsService {
   ) {}
 
   // LYD-117: cada lead trae `participants`, el porcentaje de participacion de
-  // cada asesora segun la ultima auditoria diaria (ademas del responsable).
+  // cada asesora segun la ultima auditoria diaria.
   // LYD-115: sin `leadType` devuelve todos los tipos -- el panel del chat
   // busca el lead por chatId sea del tipo que sea; el pipeline filtra.
   public async listLeads(params: {
@@ -56,7 +57,7 @@ export class LeadsService {
     const participants = await this.participationService.listByChat(
       leads.map((lead) => lead.chatId).filter((id): id is string => Boolean(id)),
     );
-    return leads.map((lead) => ({ ...lead, participants: (lead.chatId && participants.get(lead.chatId)) || [] }));
+    return leads.map((lead) => ({ ...lead, participants: leadParticipants(lead, participants) }));
   }
 
   public async getLead(id: string) {
@@ -239,4 +240,18 @@ export class LeadsService {
     }
     return lead;
   }
+}
+
+// LYD-123: un lead sin chat (landing) lo atiende solo quien lo tomo: 100%.
+function leadParticipants(
+  lead: {
+    chatId: string | null;
+    Agent: { id: string; name: string; email: string | null; color: string | null } | null;
+  },
+  byChat: Map<string, ChatParticipant[]>,
+): ChatParticipant[] {
+  if (lead.chatId) return byChat.get(lead.chatId) ?? [];
+  if (!lead.Agent) return [];
+  const { id, name, email, color } = lead.Agent;
+  return [{ agent: { id, name, email, color }, percent: 100, reason: null, reportDate: null }];
 }
