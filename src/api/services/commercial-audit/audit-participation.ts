@@ -22,7 +22,9 @@ export interface ParticipationCase {
 export interface ParticipationResult {
   id: string;
   porcentajes: Record<string, number>;
-  motivo: string | null;
+  // Aporte de cada asesora en una frase, por etiqueta: se muestra junto a su
+  // nombre, asi que no puede mencionar a las otras por letra.
+  aportes: Record<string, string>;
 }
 
 // Etiquetas anonimas para el prompt: la IA no ve el nombre de las asesoras.
@@ -66,7 +68,7 @@ export function buildParticipationPrompt(cases: ParticipationCase[]): string {
     {
       id: 'P1',
       porcentajes: { A: 70, B: 30 },
-      motivo: 'A hizo el diagnostico y cerro la visita; B solo confirmo el horario.',
+      aportes: { A: 'Hizo el diagnostico y cerro la visita.', B: 'Confirmo el horario.' },
     },
   ]);
   const conversations = cases.map((c) => {
@@ -85,7 +87,7 @@ export function buildParticipationPrompt(cases: ParticipationCase[]): string {
       '- Los mensajes del Bot y de "Asesora (sin identificar)" no son de ninguna asesora: no los asignes a nadie, son solo contexto.',
       '- Si una asesora solo envio mensajes sin aporte comercial, puede quedar con 0.',
       '- porcentajes: un numero entero por cada asesora indicada en la conversacion (A, B, ...), que sumen 100.',
-      '- motivo: una frase en espanol, sin nombres ni datos del cliente.',
+      '- aportes: por cada asesora (A, B, ...) una frase corta en espanol con lo que aporto ella, sin mencionar a las otras asesoras ni sus letras, sin nombres ni datos del cliente.',
     ].join('\n'),
     '## Formato de respuesta',
     `Responde UNICAMENTE con un arreglo JSON valido, un objeto por conversacion:\n${example}`,
@@ -102,5 +104,14 @@ export function parseParticipation(text: string): ParticipationResult[] {
   if (!Array.isArray(parsed)) throw new Error('la IA no devolvio un arreglo JSON');
   return parsed
     .filter((r) => typeof r?.id === 'string' && r?.porcentajes && typeof r.porcentajes === 'object')
-    .map((r) => ({ id: r.id, porcentajes: r.porcentajes, motivo: typeof r.motivo === 'string' ? r.motivo : null }));
+    .map((r) => ({ id: r.id, porcentajes: r.porcentajes, aportes: stringRecord(r.aportes) }));
+}
+
+function stringRecord(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object') return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim() !== '',
+    ),
+  );
 }

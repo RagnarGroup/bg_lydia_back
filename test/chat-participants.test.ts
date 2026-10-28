@@ -30,8 +30,10 @@ describe('normalizePercents', () => {
 
 describe('parseParticipation', () => {
   it('extrae el arreglo aunque venga con texto alrededor', () => {
-    const [r] = parseParticipation('Listo:\n[{"id":"P1","porcentajes":{"A":70,"B":30},"motivo":"A cerro"}]\n');
-    assert.deepEqual(r, { id: 'P1', porcentajes: { A: 70, B: 30 }, motivo: 'A cerro' });
+    const [r] = parseParticipation(
+      'Listo:\n[{"id":"P1","porcentajes":{"A":70,"B":30},"aportes":{"A":"Cerro la visita.","B":"","C":3}}]\n',
+    );
+    assert.deepEqual(r, { id: 'P1', porcentajes: { A: 70, B: 30 }, aportes: { A: 'Cerro la visita.' } });
   });
 
   it('descarta objetos sin porcentajes', () => {
