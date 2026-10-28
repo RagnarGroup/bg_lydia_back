@@ -53,6 +53,7 @@ const H2 = 'font-size:16px;color:#1e3a8a;margin:24px 0 8px;';
 export function buildAuditReportHtml(input: ReportInput): string {
   const applicable = input.audits.filter((a) => a.applicable && a.total !== null);
   const notApplicable = input.audits.length - applicable.length;
+  const approx = input.audits.filter((a) => a.attribution === 'asignada').length;
   const partial = applicable.filter((a) => a.weight < 1).length;
   const voiceNotes = input.audits.reduce((n, a) => n + (a.result.stats?.voiceNotes ?? 0), 0);
 
@@ -68,7 +69,7 @@ export function buildAuditReportHtml(input: ReportInput): string {
     applicable.length ? missedSection(applicable, input.frontUrl) : '',
     applicable.length ? pendingSection(applicable, input.frontUrl) : '',
     applicable.length ? bestSection(applicable) : '',
-    notes(partial, input.lowParticipation, input.unattributed, voiceNotes),
+    notes(approx, partial, input.lowParticipation, input.unattributed, voiceNotes),
   ];
 
   return `<!doctype html><html><head><meta charset="utf-8"></head><body style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;max-width:900px;margin:0 auto;padding:16px;">${sections.join('')}</body></html>`;
@@ -193,17 +194,28 @@ function bestSection(audits: ReportAudit[]): string {
     </div>`;
 }
 
-function notes(partial: number, lowParticipation: number, unattributed: number, voiceNotes: number): string {
+function notes(
+  approx: number,
+  partial: number,
+  lowParticipation: number,
+  unattributed: number,
+  voiceNotes: number,
+): string {
   const lines = [
     'Rúbrica META K-01: Loss Aversion 30 · CTA 30 · Diagnóstico 15 · Valor 15 · Ejecución 10. Cada criterio puntúa completo (100 %), parcial (50 %) o nulo (0).',
     'Los datos de los clientes están anonimizados. Las conversaciones no comerciales no cuentan en los promedios.',
     'Cada conversación pesa en el promedio de la asesora según su participación: hasta 20 % no se evalúa, de 21 % a 39 % pesa la mitad y desde 40 % pesa completa.',
   ];
+  if (approx) {
+    lines.push(
+      `${approx} evaluaciones se atribuyeron a la asesora responsable del chat porque los mensajes no tenían autor registrado (enviados desde el celular o antes de activar el registro de autoría).`,
+    );
+  }
   if (partial) lines.push(`${partial} evaluaciones pesaron la mitad por participación de 21 % a 39 %.`);
   if (lowParticipation) {
     lines.push(`${lowParticipation} participaciones de 20 % o menos no se evaluaron.`);
   }
-  if (unattributed) lines.push(`${unattributed} conversaciones con mensajes sin autor registrado quedaron fuera.`);
+  if (unattributed) lines.push(`${unattributed} conversaciones con mensajes sin autor ni responsable quedaron fuera.`);
   if (voiceNotes) lines.push(`${voiceNotes} notas de voz de asesoras no se evaluaron (todavía no se transcriben).`);
   return `<h2 style="${H2}">Notas</h2><ul style="color:#4b5563;font-size:12px;padding-left:18px;">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join('')}</ul>`;
 }

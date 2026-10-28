@@ -29,7 +29,7 @@ export class LeadsService {
   ) {}
 
   // LYD-117: cada lead trae `participants`, el porcentaje de participacion de
-  // cada asesora segun la ultima auditoria diaria.
+  // cada asesora segun la ultima auditoria diaria (ademas del responsable).
   // LYD-115: sin `leadType` devuelve todos los tipos -- el panel del chat
   // busca el lead por chatId sea del tipo que sea; el pipeline filtra.
   public async listLeads(params: {
