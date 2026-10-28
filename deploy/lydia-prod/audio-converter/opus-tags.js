@@ -66,4 +66,60 @@ function rewriteOpusTagsVendor(ogg) {
   return Buffer.concat([ogg.subarray(0, tags.offset), page, ogg.subarray(tags.offset + tags.length)]);
 }
 
-module.exports = { rewriteOpusTagsVendor, oggCrc, readPage };
+// Muestras a 48 kHz de un paquete Opus segun su TOC (RFC 6716 §3.1).
+function packetSamples(packet) {
+  if (!packet.length) return 0;
+  const config = packet[0] >> 3;
+  let frameSize;
+  if (config < 12) frameSize = [480, 960, 1920, 2880][config % 4];
+  else if (config < 16) frameSize = [480, 960][config % 2];
+  else frameSize = [120, 240, 480, 960][config % 4];
+  const code = packet[0] & 0x03;
+  if (code === 0) return frameSize;
+  if (code !== 3) return frameSize * 2;
+  return packet.length > 1 ? frameSize * (packet[1] & 0x3f) : 0;
+}
+
+// LYD-130: ffmpeg deja la primera pagina de audio con un granule menor que las
+// muestras de sus paquetes (ej. 47976 de 48000). RFC 7845 §4.5 obliga a
+// rechazar ese stream, y WhatsApp Android lo rechaza: "algo fallo con el
+// archivo de audio". Se suma la diferencia al granule de todas las paginas de
+// audio y se recalcula su CRC; los paquetes no cambian. Si la estructura no es
+// la esperada, devuelve el mismo buffer.
+function fixFirstAudioGranule(ogg) {
+  const pages = [];
+  for (let offset = 0; offset < ogg.length; ) {
+    const page = readPage(ogg, offset);
+    if (!page || offset + page.length > ogg.length) return ogg;
+    pages.push(page);
+    offset += page.length;
+  }
+  const first = pages[2];
+  if (!first) return ogg;
+
+  let samples = 0;
+  let packetStart = first.offset + first.headerLength;
+  let packetLength = 0;
+  for (const value of first.lacing) {
+    packetLength += value;
+    if (value < 255) {
+      samples += packetSamples(ogg.subarray(packetStart, packetStart + packetLength));
+      packetStart += packetLength;
+      packetLength = 0;
+    }
+  }
+  const delta = BigInt(samples) - ogg.readBigInt64LE(first.offset + 6);
+  if (delta <= 0n) return ogg;
+
+  const out = Buffer.from(ogg);
+  for (const page of pages.slice(2)) {
+    const granule = out.readBigInt64LE(page.offset + 6);
+    if (granule === -1n) continue;
+    out.writeBigInt64LE(granule + delta, page.offset + 6);
+    out.writeUInt32LE(0, page.offset + 22);
+    out.writeUInt32LE(oggCrc(out.subarray(page.offset, page.offset + page.length)), page.offset + 22);
+  }
+  return out;
+}
+
+module.exports = { rewriteOpusTagsVendor, fixFirstAudioGranule, oggCrc, readPage };

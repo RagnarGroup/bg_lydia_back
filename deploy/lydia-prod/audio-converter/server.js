@@ -16,7 +16,7 @@ const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 const { Readable } = require('stream');
-const { rewriteOpusTagsVendor } = require('./opus-tags');
+const { fixFirstAudioGranule, rewriteOpusTagsVendor } = require('./opus-tags');
 
 ffmpeg.setFfmpegPath(ffmpegPath);
 
@@ -58,6 +58,7 @@ async function resolveInputBuffer(req) {
 // LYD-111: sin metadata/capitulos, bitrate de voz (las nativas rondan los
 // 18-24 kbps; el default de libopus daba ~78 kbps) y vendor "WhatsApp" en el
 // OpusTags -- con el vendor de ffmpeg el movil no la reproduce.
+// LYD-130: granule de la primera pagina de audio valido para Android.
 function convertToVoiceNote(buffer) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -71,7 +72,7 @@ function convertToVoiceNote(buffer) {
       .on('error', (err) => reject(new Error(`ffmpeg fallo: ${err.message}`)))
       .pipe();
     output.on('data', (chunk) => chunks.push(chunk));
-    output.on('end', () => resolve(rewriteOpusTagsVendor(Buffer.concat(chunks))));
+    output.on('end', () => resolve(fixFirstAudioGranule(rewriteOpusTagsVendor(Buffer.concat(chunks)))));
   });
 }
 
