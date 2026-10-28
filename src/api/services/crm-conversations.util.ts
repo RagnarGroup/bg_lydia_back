@@ -59,3 +59,22 @@ export function messagePreview(message: unknown): string {
   if (body?.stickerMessage) return 'Sticker';
   return '';
 }
+
+// LYD-118: alertas de "lead sin respuesta" (5 y 10 min, las pinta el front).
+// Solo se calcula para chats con algun mensaje en esta ventana: sin ella, los
+// chats viejos que terminan en un "ok, gracias" del cliente quedarian en rojo
+// para siempre (en prod son la mayoria). Que el chat realmente espere
+// respuesta lo decide la consulta (crm.service awaitingReplySince): el ultimo
+// mensaje puede ser nuestro y aun asi esperar, si lo mando el bot.
+export const AWAITING_REPLY_WINDOW_SECONDS = 24 * 60 * 60;
+
+// Mensajes entrantes que no son algo que haya que contestar: no arrancan el reloj.
+export const AWAITING_REPLY_IGNORED_TYPES = ['reactionMessage', 'protocolMessage', 'editedMessage'] as const;
+
+export function isAwaitingReplyCandidate(
+  lastMessage: { messageTimestamp: number } | undefined,
+  nowSeconds: number,
+): boolean {
+  if (!lastMessage) return false;
+  return nowSeconds - lastMessage.messageTimestamp <= AWAITING_REPLY_WINDOW_SECONDS;
+}
