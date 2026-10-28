@@ -1,6 +1,6 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { BadRequestException } from '@exceptions';
-import { LeadActivityType, LeadStage, Prisma } from '@prisma/client';
+import { LeadActivityType, LeadStage, LeadType, Prisma } from '@prisma/client';
 
 // LYD-11: agregados de solo lectura sobre Chat/Lead/CalendarEvent para el
 // dashboard personal (PersonalDashboard.tsx). No incluye mensajesEntrantes
@@ -26,6 +26,9 @@ export class InsightsService {
           }
         : undefined;
     const byAgent = agentId ? { assignedAgentId: agentId } : {};
+    // LYD-115: las metricas de leads cuentan solo oportunidades de matricula
+    // (no postulantes laborales, alumnos actuales ni otros).
+    const leadsByAgent = { ...byAgent, leadType: LeadType.matricula };
 
     const [
       dialogosVigentes,
@@ -44,27 +47,27 @@ export class InsightsService {
         where: { status: 'pending', ...byAgent },
       }),
       this.prisma.lead.aggregate({
-        where: { ...this.reachedStageWhere(LeadStage.matriculado, dateRange), ...byAgent },
+        where: { ...this.reachedStageWhere(LeadStage.matriculado, dateRange), ...leadsByAgent },
         _count: true,
         _sum: { budgetAmount: true },
       }),
       this.prisma.lead.aggregate({
         where: {
           stage: { notIn: [LeadStage.matriculado, LeadStage.venta_perdida] },
-          ...byAgent,
+          ...leadsByAgent,
         },
         _count: true,
         _sum: { budgetAmount: true },
       }),
       this.prisma.lead.count({
-        where: { ...this.reachedStageWhere(LeadStage.venta_perdida, dateRange), ...byAgent },
+        where: { ...this.reachedStageWhere(LeadStage.venta_perdida, dateRange), ...leadsByAgent },
       }),
       this.prisma.lead.count({
-        where: { hasPendingTasks: false, ...byAgent },
+        where: { hasPendingTasks: false, ...leadsByAgent },
       }),
       this.prisma.lead.groupBy({
         by: ['source'],
-        where: { ...byAgent, ...(dateRange ? { createdAt: dateRange } : {}) },
+        where: { ...leadsByAgent, ...(dateRange ? { createdAt: dateRange } : {}) },
         _count: true,
       }),
       this.prisma.calendarEvent.count({

@@ -1,7 +1,7 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { Logger } from '@config/logger.config';
 import { BadRequestException, NotFoundException } from '@exceptions';
-import { MessageAuthorKind, Prisma } from '@prisma/client';
+import { LeadType, MessageAuthorKind, Prisma } from '@prisma/client';
 import cron from 'node-cron';
 
 import { AuditMailer } from './audit-mailer';
@@ -59,6 +59,8 @@ interface Candidate {
   attribution: 'exacta' | 'asignada';
   alias: string;
   leadStage: string | null;
+  // LYD-115: null cuando el chat todavia no tiene lead (se evalua igual).
+  leadType: LeadType | null;
   // LYD-104: sedes de la asesora evaluada, para que la IA no sugiera otra ciudad
   agentSedes: string[];
   lines: Line[];
@@ -80,6 +82,13 @@ interface AiEvaluation {
   respuesta_sugerida?: string | null;
   mejor_frase?: string | null;
 }
+
+// LYD-115: como se nombra cada tipo no comercial en el motivo de N/A.
+const NON_COMMERCIAL_LABEL: Record<Exclude<LeadType, 'matricula'>, string> = {
+  empleo: 'postulante laboral',
+  alumno_actual: 'alumno actual',
+  otro: 'no comercial',
+};
 
 // LYD-104: ciudad de cada sede del SGA (tabla `sedes`).
 const SEDE_CITY: Record<string, string> = {
@@ -240,8 +249,23 @@ export class CommercialAuditService {
       this.logger.info(`Auditoria ${reportDate}: ${candidates.length} conversaciones a evaluar`);
 
       let evaluated = 0;
-      for (let i = 0; i < candidates.length; i += BATCH_SIZE) {
-        const batch = candidates.slice(i, i + BATCH_SIZE);
+      // LYD-115: si la asesora ya marco el lead como no comercial, queda como
+      // N/A sin preguntarle a la IA.
+      const commercial: Candidate[] = [];
+      for (const candidate of candidates) {
+        if (!candidate.leadType || candidate.leadType === LeadType.matricula) {
+          commercial.push(candidate);
+          continue;
+        }
+        await this.saveAudit(run.id, candidate, {
+          id: candidate.ref,
+          aplica: false,
+          motivo_no_aplica: `Lead marcado como ${NON_COMMERCIAL_LABEL[candidate.leadType]}`,
+        });
+        evaluated++;
+      }
+      for (let i = 0; i < commercial.length; i += BATCH_SIZE) {
+        const batch = commercial.slice(i, i + BATCH_SIZE);
         const results = await this.evaluateBatch(batch);
         for (const candidate of batch) {
           const result = results.get(candidate.ref);
@@ -364,7 +388,7 @@ export class CommercialAuditService {
           name: true,
           contactNameOverride: true,
           assignedAgentId: true,
-          Lead: { select: { stage: true, contactName: true } },
+          Lead: { select: { stage: true, leadType: true, contactName: true } },
         },
       });
       if (!chat) continue;
@@ -410,6 +434,7 @@ export class CommercialAuditService {
           attribution: target.attribution,
           alias: clientAlias(chat.id),
           leadStage: chat.Lead?.stage ?? null,
+          leadType: chat.Lead?.leadType ?? null,
           agentSedes: agentSedes.get(target.agentId) ?? [],
           lines,
           stats: executionStats(lines),

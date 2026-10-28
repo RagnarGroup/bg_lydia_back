@@ -1,7 +1,7 @@
 import { PrismaRepository } from '@api/repository/repository.service';
 import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
-import { LeadActivityType, LeadStage, Prisma } from '@prisma/client';
+import { LeadActivityType, LeadStage, LeadType, Prisma } from '@prisma/client';
 
 // No hay secuencia nativa para un id de texto (cuid) -- generamos el
 // consecutivo dentro de la misma transaccion que el insert para evitar que dos
@@ -29,11 +29,21 @@ export class LeadsService {
 
   // LYD-117: cada lead trae `participants`, el porcentaje de participacion de
   // cada asesora segun la ultima auditoria diaria (ademas del responsable).
-  public async listLeads(params: { stage?: LeadStage; assignedAgentId?: string; source?: string; chatId?: string }) {
-    const { stage, assignedAgentId, source, chatId } = params;
+  // LYD-115: sin `leadType` devuelve todos los tipos -- el panel del chat
+  // busca el lead por chatId sea del tipo que sea; el pipeline filtra.
+  public async listLeads(params: {
+    stage?: LeadStage;
+    leadType?: LeadType;
+    assignedAgentId?: string;
+    source?: string;
+    chatId?: string;
+  }) {
+    const { stage, leadType, assignedAgentId, source, chatId } = params;
+    this.assertValidLeadType(leadType);
     const leads = await this.prisma.lead.findMany({
       where: {
         ...(stage ? { stage } : {}),
+        ...(leadType ? { leadType } : {}),
         ...(assignedAgentId ? { assignedAgentId } : {}),
         ...(source ? { source } : {}),
         // LYD-20: Lead.chatId es @unique -- a lo sumo un resultado, sirve
@@ -63,6 +73,7 @@ export class LeadsService {
     budget?: string;
     budgetAmount?: number;
     stage?: LeadStage;
+    leadType?: LeadType;
     observations?: string;
     chatId?: string;
     assignedAgentId?: string;
@@ -93,6 +104,7 @@ export class LeadsService {
       budget?: string;
       budgetAmount?: number;
       stage?: LeadStage;
+      leadType?: LeadType;
       observations?: string;
       chatId?: string;
       assignedAgentId?: string;
@@ -106,6 +118,7 @@ export class LeadsService {
       throw new BadRequestException('source is required');
     }
     this.assertValidStage(data.stage);
+    this.assertValidLeadType(data.leadType);
 
     if (data.assignedAgentId) {
       const agent = await this.prisma.agent.findUnique({ where: { id: data.assignedAgentId } });
@@ -136,6 +149,7 @@ export class LeadsService {
           // contacto_inicial, aunque el panel del chat lo creara al elegir
           // otro estado.
           stage: data.stage,
+          leadType: data.leadType,
           observations: data.observations,
           chatId: data.chatId ?? null,
           assignedAgentId: data.assignedAgentId ?? null,
@@ -151,6 +165,7 @@ export class LeadsService {
     id: string,
     data: {
       stage?: LeadStage;
+      leadType?: LeadType;
       assignedAgentId?: string | null;
       contactName?: string;
       company?: string;
@@ -167,6 +182,7 @@ export class LeadsService {
   ) {
     const current = await this.assertLeadExists(id);
     this.assertValidStage(data.stage);
+    this.assertValidLeadType(data.leadType);
 
     if (data.assignedAgentId) {
       const agent = await this.prisma.agent.findUnique({ where: { id: data.assignedAgentId } });
@@ -207,6 +223,12 @@ export class LeadsService {
   private assertValidStage(stage?: LeadStage) {
     if (stage !== undefined && !Object.values(LeadStage).includes(stage)) {
       throw new BadRequestException(`Invalid stage "${stage}"`);
+    }
+  }
+
+  private assertValidLeadType(leadType?: LeadType) {
+    if (leadType !== undefined && !Object.values(LeadType).includes(leadType)) {
+      throw new BadRequestException(`Invalid leadType "${leadType}"`);
     }
   }
 

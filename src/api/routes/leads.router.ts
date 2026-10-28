@@ -1,7 +1,7 @@
 import 'express-async-errors';
 
 import { leadsController } from '@api/server.module';
-import { LeadStage } from '@prisma/client';
+import { LeadStage, LeadType } from '@prisma/client';
 import { Router } from 'express';
 
 // LYD-8: CRUD simple sobre el pipeline de leads propio de Lydia. Mismo
@@ -13,13 +13,14 @@ export class LeadsRouter {
   constructor() {
     this.router
       .get('/', async (req, res) => {
-        const { stage, assignedAgentId, source, chatId } = req.query as {
+        const { stage, leadType, assignedAgentId, source, chatId } = req.query as {
           stage?: LeadStage;
+          leadType?: LeadType;
           assignedAgentId?: string;
           source?: string;
           chatId?: string;
         };
-        return res.json(await leadsController.listLeads({ stage, assignedAgentId, source, chatId }));
+        return res.json(await leadsController.listLeads({ stage, leadType, assignedAgentId, source, chatId }));
       })
       .post('/', async (req, res) => {
         return res.status(201).json(await leadsController.createLead(req.body ?? {}));

@@ -93,6 +93,16 @@ enum LeadStage {
   venta_perdida
 }
 
+// LYD-115: que es el lead. Solo `matricula` es una oportunidad de venta: los
+// demas (postulante laboral, alumno actual, otro) quedan fuera del pipeline,
+// de las metricas comerciales y de la auditoria K-01.
+enum LeadType {
+  matricula
+  empleo
+  alumno_actual
+  otro
+}
+
 // LYD-83: estado de la visita solicitada desde la landing.
 enum LeadVisitStatus {
   solicitada
@@ -307,6 +317,7 @@ model Lead {
   budget          String?   @db.VarChar(50)
   budgetAmount    Decimal   @default(0) @db.Decimal(12, 2)
   stage           LeadStage @default(contacto_inicial)
+  leadType        LeadType  @default(matricula)
   hasPendingTasks Boolean   @default(false)
   // LYD-12: reemplaza el concepto de "Nota 1..5" de imports historicos
   // (ej. Kommo) -- un solo campo de texto libre, no una lista.
@@ -338,6 +349,7 @@ model Lead {
   LeadActivity  LeadActivity[]
 
   @@index([stage])
+  @@index([leadType])
   @@index([assignedAgentId])
   @@index([source])
   @@index([sede])
