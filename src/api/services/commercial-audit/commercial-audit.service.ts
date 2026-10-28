@@ -59,6 +59,7 @@ interface Candidate {
   ref: string;
   chatId: string;
   agentId: string;
+  attribution: 'exacta' | 'asignada';
   alias: string;
   leadStage: string | null;
   // LYD-115: null cuando el chat todavia no tiene lead (se evalua igual).
@@ -395,17 +396,23 @@ export class CommercialAuditService {
           id: true,
           name: true,
           contactNameOverride: true,
+          assignedAgentId: true,
           Lead: { select: { stage: true, leadType: true, contactName: true } },
         },
       });
       if (!chat) continue;
 
-      // LYD-123: sin autor registrado (enviado desde el celular o antes de
-      // LYD-101) la conversacion queda sin atribuir; ya no hay responsable.
-      if (!agents.size) {
-        if (unknown > 0) unattributed++;
-        continue;
+      // Sin autor registrado (enviado antes de LYD-101 o desde el celular):
+      // se atribuye al responsable del chat, marcado como "asignada".
+      const targets: { agentId: string; attribution: Candidate['attribution'] }[] = [...agents].map((agentId) => ({
+        agentId,
+        attribution: 'exacta',
+      }));
+      if (!targets.length && unknown > 0) {
+        if (chat.assignedAgentId) targets.push({ agentId: chat.assignedAgentId, attribution: 'asignada' });
+        else unattributed++;
       }
+      if (!targets.length) continue;
 
       const contact = await this.prisma.contact.findFirst({
         where: { instanceId, remoteJid },
@@ -420,23 +427,24 @@ export class CommercialAuditService {
         ...history.clientPushNames,
       ]);
 
-      for (const agentId of agents) {
+      for (const target of targets) {
         const lines = history.messages.map((m) => ({
           at: m.at,
           inWindow: m.at >= windowStart,
           voice: m.voice,
           text: anonymize(m.text, tokens),
-          speaker: speakerFor(m, agentId),
+          speaker: speakerFor(m, target),
         }));
         if (!lines.some((l) => l.inWindow && l.speaker === 'evaluada')) continue;
         candidates.push({
           ref: `C${candidates.length + 1}`,
           chatId: chat.id,
-          agentId,
+          agentId: target.agentId,
+          attribution: target.attribution,
           alias: clientAlias(chat.id),
           leadStage: chat.Lead?.stage ?? null,
           leadType: chat.Lead?.leadType ?? null,
-          agentSedes: agentSedes.get(agentId) ?? [],
+          agentSedes: agentSedes.get(target.agentId) ?? [],
           lines,
           stats: executionStats(lines),
         });
@@ -547,7 +555,7 @@ export class CommercialAuditService {
         runId,
         chatId: candidate.chatId,
         agentId: candidate.agentId,
-        attribution: 'exacta',
+        attribution: candidate.attribution,
         applicable,
         total,
         lossAversion: scores.lossAversion ?? null,
@@ -737,12 +745,12 @@ export class CommercialAuditService {
 
 function speakerFor(
   m: { fromMe: boolean; authorKind: MessageAuthorKind | null; authorAgentId: string | null },
-  agentId: string,
+  target: { agentId: string; attribution: Candidate['attribution'] },
 ): Speaker {
   if (!m.fromMe) return 'cliente';
   if (m.authorKind === MessageAuthorKind.bot || m.authorKind === MessageAuthorKind.bienvenida) return 'bot';
-  if (m.authorKind === MessageAuthorKind.asesora) return m.authorAgentId === agentId ? 'evaluada' : 'otra';
-  return 'sin_atribuir';
+  if (m.authorKind === MessageAuthorKind.asesora) return m.authorAgentId === target.agentId ? 'evaluada' : 'otra';
+  return target.attribution === 'asignada' ? 'evaluada' : 'sin_atribuir';
 }
 
 function participationKey(runId: string, chatId: string, agentId: string | null): string {

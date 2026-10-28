@@ -1,5 +1,4 @@
 import { PrismaRepository } from '@api/repository/repository.service';
-import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { BadRequestException } from '@exceptions';
 import { LeadActivityType, LeadStage, LeadType, Prisma } from '@prisma/client';
 
@@ -12,16 +11,8 @@ import { LeadActivityType, LeadStage, LeadType, Prisma } from '@prisma/client';
 // ganados/perdidos (cuando llegaron a esa etapa), fuentes (leads creados) y
 // tareas (startAt). Dialogos vigentes/sin replica, leads activos y leads sin
 // tareas son estado actual y no dependen del periodo.
-//
-// LYD-123: con agentId ya no se filtra por responsable. Los dialogos son los
-// chats donde escribio la asesora; los leads, los de chats donde tiene 40% o
-// mas de participacion en la ultima auditoria (un lead puede contar para dos)
-// y los de la landing que ella tomo.
 export class InsightsService {
-  constructor(
-    private readonly prisma: PrismaRepository,
-    private readonly participationService: ConversationParticipationService,
-  ) {}
+  constructor(private readonly prisma: PrismaRepository) {}
 
   public async getPersonalInsights(params: { agentId?: string; from?: string; to?: string }) {
     const { agentId } = params;
@@ -34,19 +25,10 @@ export class InsightsService {
             ...(to ? { lte: to } : {}),
           }
         : undefined;
-    const [writtenChats, creditedChats] = agentId
-      ? await Promise.all([
-          this.participationService.chatIdsWrittenBy(agentId),
-          this.participationService.chatIdsCreditedTo(agentId),
-        ])
-      : [[], []];
-    const byAgent: Prisma.ChatWhereInput = agentId ? { id: { in: writtenChats } } : {};
+    const byAgent = agentId ? { assignedAgentId: agentId } : {};
     // LYD-115: las metricas de leads cuentan solo oportunidades de matricula
     // (no postulantes laborales, alumnos actuales ni otros).
-    const leadsByAgent: Prisma.LeadWhereInput = {
-      leadType: LeadType.matricula,
-      ...(agentId ? { OR: [{ chatId: { in: creditedChats } }, { chatId: null, assignedAgentId: agentId }] } : {}),
-    };
+    const leadsByAgent = { ...byAgent, leadType: LeadType.matricula };
 
     const [
       dialogosVigentes,
@@ -65,13 +47,13 @@ export class InsightsService {
         where: { status: 'pending', ...byAgent },
       }),
       this.prisma.lead.count({
-        where: { AND: [this.reachedStageWhere(LeadStage.matriculado, dateRange), leadsByAgent] },
+        where: { ...this.reachedStageWhere(LeadStage.matriculado, dateRange), ...leadsByAgent },
       }),
       this.prisma.lead.count({
         where: { stage: { notIn: [LeadStage.matriculado, LeadStage.venta_perdida] }, ...leadsByAgent },
       }),
       this.prisma.lead.count({
-        where: { AND: [this.reachedStageWhere(LeadStage.venta_perdida, dateRange), leadsByAgent] },
+        where: { ...this.reachedStageWhere(LeadStage.venta_perdida, dateRange), ...leadsByAgent },
       }),
       this.prisma.lead.count({
         where: { hasPendingTasks: false, ...leadsByAgent },

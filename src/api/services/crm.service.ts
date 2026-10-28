@@ -1,5 +1,4 @@
 import { PrismaRepository } from '@api/repository/repository.service';
-import { ConversationParticipationService } from '@api/services/conversation-participation.service';
 import { BadRequestException, NotFoundException } from '@exceptions';
 import { AgentRole, ChatStatus, Prisma } from '@prisma/client';
 import { status as messageStatus } from '@utils/renderStatus';
@@ -56,10 +55,7 @@ type SearchMessageRow = {
 // eso -- solo agrega lo que daba Chatwoot: asignacion de agente, estado de
 // atencion (open/pending/resolved) y notas internas.
 export class CrmService {
-  constructor(
-    private readonly prisma: PrismaRepository,
-    private readonly participationService: ConversationParticipationService,
-  ) {}
+  constructor(private readonly prisma: PrismaRepository) {}
 
   public async listAgents() {
     return this.prisma.agent.findMany({
@@ -230,7 +226,7 @@ export class CrmService {
     const instanceIds = [...new Set(chats.map((c) => c.instanceId))];
     const lastMessageIds = chats.map((c) => c.lastMessageId).filter((id): id is string => !!id);
 
-    const [instances, contacts, lastMessages, writers] = await Promise.all([
+    const [instances, contacts, lastMessages] = await Promise.all([
       this.prisma.instance.findMany({
         where: { id: { in: instanceIds } },
         select: { id: true, name: true, integration: true },
@@ -242,7 +238,6 @@ export class CrmService {
         where: { id: { in: lastMessageIds } },
         select: { id: true, message: true, messageTimestamp: true },
       }),
-      this.participationService.writersByChat(ids),
     ]);
 
     const instanceById = new Map(instances.map((i) => [i.id, i]));
@@ -274,8 +269,6 @@ export class CrmService {
             ? { content: messagePreview(message.message), timestamp: message.messageTimestamp }
             : null,
           awaitingReplySince: awaitingReplySince.get(chat.id) ?? null,
-          // LYD-123: asesoras que escribieron en el chat (reemplaza al responsable).
-          participantIds: writers.get(chat.id) ?? [],
         };
       });
   }
@@ -491,6 +484,33 @@ export class CrmService {
   // Se bloquea si hay un Lead vinculado -- Lead.chatId no tiene cascada
   // (a proposito, ver schema) para no destruir informacion de pipeline
   // comercial sin que alguien lo decida a mano primero.
+  // LYD-77: la asesora que responde un chat sin responsable queda asignada.
+  // El update es condicional (assignedAgentId null) para que dos asesoras
+  // respondiendo a la vez no se pisen y para que un chat ya asignado solo
+  // cambie de dueño a mano (updateConversation). El lead del chat sigue la
+  // misma regla.
+  public async claimConversation(chatId: string, agentId?: string) {
+    await this.assertChatExists(chatId);
+    if (!agentId) {
+      throw new BadRequestException('agentId is required');
+    }
+    const agent = await this.prisma.agent.findUnique({ where: { id: agentId } });
+    if (!agent) {
+      throw new BadRequestException(`Agent "${agentId}" not found`);
+    }
+
+    await this.prisma.chat.updateMany({
+      where: { id: chatId, assignedAgentId: null },
+      data: { assignedAgentId: agentId },
+    });
+    await this.prisma.lead.updateMany({
+      where: { chatId, assignedAgentId: null },
+      data: { assignedAgentId: agentId },
+    });
+
+    return this.prisma.chat.findUnique({ where: { id: chatId }, include: { Agent: true } });
+  }
+
   public async deleteConversation(chatId: string) {
     const chat = await this.assertChatExists(chatId);
 
