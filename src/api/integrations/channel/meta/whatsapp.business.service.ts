@@ -1171,6 +1171,10 @@ export class BusinessStartupService extends ChannelStartupService {
                 message['fileName'] &&
                 !isImage && { filename: message['fileName'] }),
               ...(message['mediaType'] !== 'audio' && message['caption'] && { caption: message['caption'] }),
+              // LYD-127: sin voice:true Meta lo entrega como audio basico
+              // (descarga manual, icono de musica) y hay celulares que no lo
+              // reproducen; solo lo marca processAudio() (ogg/opus).
+              ...(message['mediaType'] === 'audio' && message['voice'] && { voice: true }),
             },
           };
           quoted ? (content.context = { message_id: quoted.id }) : content;
@@ -1589,6 +1593,8 @@ export class BusinessStartupService extends ChannelStartupService {
         // lado del front (data:<mimetype>;base64,...) -- un espacio crudo ahi
         // es invalido/ambiguo (RFC 2397).
         mimetype: 'audio/ogg;codecs=opus',
+        // LYD-127: nota de voz, no audio basico (ver sendMessageWithTyping).
+        voice: true,
       };
 
       const id = await this.getIdMedia(prepareMedia);
