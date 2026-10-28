@@ -100,10 +100,6 @@ export class CrmController {
     return this.crmService.deleteConversation(chatId);
   }
 
-  public async claimConversation(chatId: string, body: { agentId?: string }) {
-    return this.crmService.claimConversation(chatId, body.agentId);
-  }
-
   public async listNotes(chatId: string) {
     return this.crmService.listNotes(chatId);
   }

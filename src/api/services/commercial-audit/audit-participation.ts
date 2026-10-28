@@ -27,6 +27,19 @@ export interface ParticipationResult {
   aportes: Record<string, string>;
 }
 
+// LYD-123: cuanto pesa una conversacion en los promedios de la asesora segun
+// su participacion. Hasta 20% no cuenta (ni se evalua), de 21% a 39% cuenta
+// la mitad y desde 40% completa. Sin participacion calculada (corridas
+// anteriores o falla de la IA) cuenta completa.
+export const MIN_PARTICIPATION = 20;
+export const FULL_PARTICIPATION = 40;
+
+export function participationWeight(percent: number | null | undefined): number {
+  if (percent === null || percent === undefined) return 1;
+  if (percent <= MIN_PARTICIPATION) return 0;
+  return percent < FULL_PARTICIPATION ? 0.5 : 1;
+}
+
 // Etiquetas anonimas para el prompt: la IA no ve el nombre de las asesoras.
 export function participantLabel(index: number): string {
   return String.fromCharCode(65 + index);
