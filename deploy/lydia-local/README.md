@@ -58,6 +58,7 @@ Firebase (viene autorizado por defecto).
 node simulate-message.mjs                                   # 1 mensaje, contacto de prueba
 node simulate-message.mjs --text "Hola" --phone 51955555555 --name "Ana Prueba"
 node simulate-message.mjs --count 5 --every 10              # 5 mensajes, uno cada 10 s
+node simulate-message.mjs --minutes-ago 11                  # fechado hace 11 min: alerta roja sin esperar
 ```
 
 Cada `--phone` distinto es una conversación distinta. Para que suene la alerta

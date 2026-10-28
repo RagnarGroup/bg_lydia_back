@@ -69,7 +69,9 @@ export async function waitForApi(timeoutMs = 120_000) {
 
 // Envia a /webhook/meta un mensaje de texto entrante con la misma forma y la
 // misma firma (X-Hub-Signature-256) que manda Meta.
-export async function sendIncomingText({ phone, name, text }) {
+// LYD-118: secondsAgo fecha el mensaje en el pasado (probar las alertas de 5 y
+// 10 min sin respuesta sin esperar).
+export async function sendIncomingText({ phone, name, text, secondsAgo = 0 }) {
   const payload = {
     object: 'whatsapp_business_account',
     entry: [
@@ -86,7 +88,7 @@ export async function sendIncomingText({ phone, name, text }) {
                 {
                   from: phone,
                   id: `wamid.local-${randomUUID()}`,
-                  timestamp: String(Math.floor(Date.now() / 1000)),
+                  timestamp: String(Math.floor(Date.now() / 1000) - secondsAgo),
                   type: 'text',
                   text: { body: text },
                 },

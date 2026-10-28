@@ -5,9 +5,11 @@ import { status as messageStatus } from '@utils/renderStatus';
 
 import { AGENT_TAG_OPTIONS, applyTagPatch, readAgentTags } from './agent-tags';
 import {
+  AWAITING_REPLY_IGNORED_TYPES,
   ConversationChannel,
   decodeCursor,
   encodeCursor,
+  isAwaitingReplyCandidate,
   messagePreview,
   NON_WHATSAPP_INTEGRATIONS,
 } from './crm-conversations.util';
@@ -243,6 +245,15 @@ export class CrmService {
     const messageById = new Map(lastMessages.map((m) => [m.id, m]));
     const chatById = new Map(chats.map((c) => [c.id, c]));
 
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const awaitingReplySince = await this.awaitingReplySince(
+      chats
+        .filter((c) =>
+          isAwaitingReplyCandidate(c.lastMessageId ? messageById.get(c.lastMessageId) : undefined, nowSeconds),
+        )
+        .map((c) => c.id),
+    );
+
     return ids
       .map((id) => chatById.get(id))
       .filter((chat): chat is (typeof chats)[number] => !!chat)
@@ -257,8 +268,49 @@ export class CrmService {
           lastMessage: message
             ? { content: messagePreview(message.message), timestamp: message.messageTimestamp }
             : null,
+          awaitingReplySince: awaitingReplySince.get(chat.id) ?? null,
         };
       });
+  }
+
+  // LYD-118: desde cuando espera respuesta cada chat (hora unix): el primer
+  // mensaje del cliente despues de la ultima respuesta humana. Los mensajes
+  // del bot y el de bienvenida (MessageAuthor) no cuentan como respuesta; lo
+  // enviado por una asesora o sin atribuir (celular), si. Solo para los chats
+  // que ya filtro isAwaitingReplyCandidate: las dos subconsultas recorren el
+  // indice Message(instanceId, remoteJid, timestamp) de LYD-79.
+  private async awaitingReplySince(chatIds: string[]): Promise<Map<string, number>> {
+    if (!chatIds.length) return new Map();
+
+    const rows = await this.prisma.$queryRaw<{ chatId: string; since: number | null }[]>`
+      SELECT c."id" AS "chatId", (
+        SELECT MIN(m."messageTimestamp")
+        FROM "Message" m
+        WHERE m."instanceId" = c."instanceId"
+          AND m."key"->>'remoteJid' = c."remoteJid"
+          AND COALESCE((m."key"->>'fromMe')::boolean, false) = false
+          AND m."messageType" NOT IN (${Prisma.join([...AWAITING_REPLY_IGNORED_TYPES])})
+          AND m."messageTimestamp" > COALESCE((
+            SELECT o."messageTimestamp"
+            FROM "Message" o
+            WHERE o."instanceId" = c."instanceId"
+              AND o."key"->>'remoteJid' = c."remoteJid"
+              AND COALESCE((o."key"->>'fromMe')::boolean, false) = true
+              AND NOT EXISTS (
+                SELECT 1 FROM "MessageAuthor" a
+                WHERE a."instanceId" = o."instanceId"
+                  AND a."messageKeyId" = o."key"->>'id'
+                  AND a."kind" IN ('bot', 'bienvenida')
+              )
+            ORDER BY o."messageTimestamp" DESC
+            LIMIT 1
+          ), 0)
+      ) AS "since"
+      FROM "Chat" c
+      WHERE c."id" IN (${Prisma.join(chatIds)})
+    `;
+
+    return new Map(rows.filter((r) => r.since !== null).map((r) => [r.chatId, Number(r.since)]));
   }
 
   // LYD-60: busqueda contextual dentro de los mensajes (estilo WhatsApp).
