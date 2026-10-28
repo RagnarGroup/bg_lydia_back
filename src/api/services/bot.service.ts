@@ -156,10 +156,6 @@ export class BotService {
     });
     if (claim.count === 0) return;
 
-    await this.prisma.conversationNote.create({
-      data: { chatId, content: `Bot — ${node.text}\nRespuesta: ${option.title}`, agentId: null },
-    });
-
     const edge = graph.edges.find((e) => e.from === nodeId && e.fromOption === optionId);
     if (!edge) {
       await this.prisma.botSession.update({ where: { id: session.id }, data: { status: 'done' } });
