@@ -628,7 +628,7 @@ export class CommercialAuditService {
             chatId: item.chatId,
             agentId,
             percent: percents[item.case.labels[idx]],
-            reason: result.motivo,
+            reason: result.aportes[item.case.labels[idx]] ?? null,
           })),
         });
         saved++;
@@ -638,7 +638,7 @@ export class CommercialAuditService {
   }
 
   private async evaluateParticipation(cases: ParticipationCase[]) {
-    const results = new Map<string, { porcentajes: Record<string, number>; motivo: string | null }>();
+    const results = new Map<string, { porcentajes: Record<string, number>; aportes: Record<string, string> }>();
     try {
       for (const r of parseParticipation(await this.askBridge(buildParticipationPrompt(cases)))) results.set(r.id, r);
     } catch (error) {
