@@ -201,3 +201,138 @@ describe('participacion con dos corridas el mismo dia', () => {
     assert.equal(result.get('c1')?.length, 1);
   });
 });
+
+// ---------- LYD-134: reporte diario V2 ----------
+
+import { fallbackCoaching, parseCoaching } from '../src/api/services/commercial-audit/audit-coaching';
+import {
+  buildAuditReportHtmlV2,
+  conversationSede,
+  ReportAuditV2,
+} from '../src/api/services/commercial-audit/audit-report-v2';
+
+const agentA = { id: 'a1', name: 'Ana', sedes: ['Cayma'] };
+const agentB = { id: 'a2', name: 'Bea', sedes: ['Centro', 'Cayma'] };
+
+function audit(over: Partial<ReportAuditV2> & { chatId: string }, result: Partial<ReportAuditV2['result']> = {}) {
+  const dims = Object.fromEntries(DIMENSIONS.map((d) => [d.key, { points: d.weight / 2, evaluable: d.weight, weight: d.weight }]));
+  return {
+    agentId: 'a1',
+    attribution: 'exacta',
+    applicable: true,
+    total: 50,
+    coverage: 100,
+    confidence: 'alta',
+    state: 'en_seguimiento',
+    Agent: agentA,
+    percent: 100,
+    weight: 1,
+    ...over,
+    result: {
+      alias: `Cliente #${over.chatId}`,
+      leadStage: 'negociacion',
+      leadSede: null,
+      stats: { avgResponseMinutes: 5, lastFromClient: false, voiceNotes: 0 },
+      rapidez: { promedioMinutos: 5, demoras: [] },
+      criterios: {},
+      dimensiones: dims,
+      puntos: 50,
+      evaluables: 100,
+      diagnostico: [],
+      consejos: [],
+      respuestaSugerida: null,
+      proximaAccion: 'visita',
+      motivoNoAplica: null,
+      ...result,
+    },
+  } as ReportAuditV2;
+}
+
+const reportInput = (audits: ReportAuditV2[]) => ({
+  reportDate: '2026-10-28',
+  windowStart: lima('2026-10-27T21:00:00'),
+  windowEnd: lima('2026-10-28T21:00:00'),
+  unattributed: 0,
+  lowParticipation: 0,
+  failed: 0,
+  frontUrl: 'https://crm.example',
+  audits,
+  previous: [],
+  coaching: { a1: { items: ['Proponer dos horarios de visita'], fallback: false } },
+});
+
+describe('coaching por asesora', () => {
+  it('toma hasta 3 recomendaciones validas por etiqueta', () => {
+    const map = parseCoaching('ok [{"id":"A","recomendaciones":["1"," 2 ","",3,"4","5"]},{"id":"B"}]');
+    assert.deepEqual(map.get('A'), ['1', '2', '4']);
+    assert.equal(map.has('B'), false);
+  });
+
+  it('el respaldo usa los consejos de la conversacion mas baja sin repetir', () => {
+    assert.deepEqual(
+      fallbackCoaching([
+        { total: 80, tips: ['x', 'y'] },
+        { total: 20, tips: ['a', 'x'] },
+      ]),
+      ['a', 'x', 'y'],
+    );
+  });
+});
+
+describe('sede de una conversacion (sin duplicar)', () => {
+  it('sede del lead, unica sede de la asesora o multisede', () => {
+    assert.equal(conversationSede([audit({ chatId: '1', Agent: agentB }, { leadSede: 'Lince' })]), 'Lince');
+    assert.equal(conversationSede([audit({ chatId: '1' })]), 'Cayma');
+    assert.equal(conversationSede([audit({ chatId: '1', Agent: agentB })]), 'Asesora multisede');
+  });
+});
+
+describe('buildAuditReportHtmlV2', () => {
+  const html = buildAuditReportHtmlV2(
+    reportInput([
+      audit({ chatId: 'A1', total: 90 }),
+      audit({ chatId: 'A2', total: 80 }),
+      audit({ chatId: 'A3', total: 30 }, { respuestaSugerida: '¿Te espero hoy o mañana?' }),
+      audit({ chatId: 'B1', agentId: 'a2', Agent: agentB, total: 10, state: 'perdida' }),
+      audit({ chatId: 'B2', agentId: 'a2', Agent: agentB, total: 20, confidence: 'baja', coverage: 30 }),
+      audit({ chatId: 'B3', agentId: 'a2', Agent: agentB, total: 40, state: 'en_riesgo' }),
+      audit({ chatId: 'N1', applicable: false, total: null, coverage: null, confidence: null, state: null }),
+      audit({ chatId: 'C1', agentId: 'a3', Agent: { id: 'a3', name: 'Caro', sedes: ['Lince'] }, total: 70 }),
+    ]),
+  );
+
+  it('rankea solo con muestra suficiente y avisa la insuficiente', () => {
+    assert.match(html, /Ranking por asesora/);
+    assert.match(html, /muestra insuficiente/);
+  });
+
+  it('las criticas excluyen perdidas y confianza baja', () => {
+    const critical = html.slice(html.indexOf('críticas del día'), html.indexOf('En riesgo'));
+    assert.ok(critical.includes('Cliente #A3'));
+    assert.ok(critical.includes('Cliente #B3'));
+    assert.ok(!critical.includes('Cliente #B1'));
+    assert.ok(!critical.includes('Cliente #B2'));
+    assert.ok(critical.includes('50 de 100 puntos evaluables'));
+    assert.ok(critical.includes('¿Te espero hoy o mañana?'));
+  });
+
+  it('en riesgo y perdidas van separadas', () => {
+    const risk = html.slice(html.indexOf('En riesgo (para'), html.indexOf('Oportunidades perdidas'));
+    assert.ok(risk.includes('Cliente #B3') && !risk.includes('Cliente #B1'));
+    const lost = html.slice(html.indexOf('Oportunidades perdidas'), html.indexOf('Evaluaciones incompletas'));
+    assert.ok(lost.includes('Cliente #B1') && !lost.includes('Cliente #B3'));
+  });
+
+  it('muestra las evaluaciones de confianza baja, el coaching y los avisos', () => {
+    const low = html.slice(html.indexOf('Evaluaciones incompletas'), html.indexOf('<h2', html.indexOf('Evaluaciones incompletas') + 5));
+    assert.ok(low.includes('Cliente #B2') && low.includes('cobertura 30 %'));
+    assert.ok(html.includes('Proponer dos horarios de visita'));
+    assert.ok(html.includes('no es prueba suficiente para sanciones laborales'));
+    assert.ok(html.includes('no son comparables'));
+  });
+
+  it('las no comerciales no entran en los promedios', () => {
+    // Ana: (90+80+30)/3 = 67; la N/A no cuenta
+    assert.match(html, /<b>67<\/b>\/100/);
+  });
+});
