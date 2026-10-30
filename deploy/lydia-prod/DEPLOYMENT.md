@@ -54,7 +54,7 @@ nativo del fork, sin tocar código), y ese conversor es el servicio
 `API_AUDIO_CONVERTER_KEY` (header `apikey`), generada por
 `generate_secrets.sh` igual que el resto de los secretos de este `.env`.
 
-## Auditoría comercial diaria (META K-01)
+## Auditoría comercial diaria (K-01)
 
 `evolution-api` evalúa todos los días las conversaciones comerciales de las
 asesoras y manda el reporte por correo (LYD-101 autoría por mensaje, LYD-102
@@ -74,6 +74,22 @@ Google, pero el envío va por Banahost). `SMTP_PASS` es el `MAIL_PASS` del `.env
 del SGA, copiado dentro del VPS. Como `docker-compose.yml` vive en
 `/lydia_prod/` y el workflow solo sincroniza `back/`, las variables nuevas del
 compose se copian a mano desde `back/deploy/lydia-prod/docker-compose.yml`.
+
+Cada corrida es de una versión de rúbrica y es única por (fecha, versión), así
+que evaluar un día con otra versión no borra la anterior:
+
+- **K01-V1** (META K-01): Loss Aversion 30 · CTA 30 · Diagnóstico 15 · Valor
+  15 · Ejecución 10, cada criterio completo, parcial o nulo.
+- **K01-V2.0** (coaching comercial): Ogilvy 25 · Kahneman 20 · Cialdini 15 ·
+  CTA y cierre 30 · Ejecución 10, con sub-criterios. Lo que no se puede evaluar
+  sale del denominador: nota = 100 × puntos ÷ puntos evaluables, y la cobertura
+  es la proporción evaluable. La rapidez la calcula el código desde las marcas
+  temporales, contando solo el horario de atención (lunes a sábado de 8:00 a
+  21:00). Las citas de la IA que no están en la conversación se descartan.
+
+La corrida automática usa `COMMERCIAL_AUDIT_RUBRIC` (por defecto `K01-V1`) y es
+la única que se envía a `COMMERCIAL_AUDIT_TO`: una corrida de otra versión solo
+se envía con `"to"`, así Dirección nunca recibe dos reportes del mismo día.
 
 Si `evolution-api` se reinicia después del corte (por un deploy, por ejemplo) y
 el reporte del día no salió, al arrancar vuelve a correr la evaluación y la
@@ -99,6 +115,11 @@ curl -s -H "apikey: $KEY" http://127.0.0.1:8091/crm/commercial-audit/runs/2026-1
 curl -s -X POST -H "apikey: $KEY" -H 'Content-Type: application/json' \
   -d '{"to":["desarrollo@brittanygroup.edu.pe"]}' \
   http://127.0.0.1:8091/crm/commercial-audit/runs/2026-10-22/send
+# otra versión de rúbrica: "version" en el body (POST) o ?version= (GET);
+# sin ella, la de COMMERCIAL_AUDIT_RUBRIC
+curl -s -X POST -H "apikey: $KEY" -H 'Content-Type: application/json' \
+  -d '{"date":"2026-10-22","version":"K01-V2.0"}' http://127.0.0.1:8091/crm/commercial-audit/runs
+curl -s -H "apikey: $KEY" "http://127.0.0.1:8091/crm/commercial-audit/runs/2026-10-22/html?version=K01-V2.0" > v2.html
 ```
 
 ## Desplegar

@@ -205,6 +205,9 @@ services:
       # envia, America/Lima). Apagada salvo COMMERCIAL_AUDIT_ENABLED=true.
       # El correo sale con la cuenta del SGA (soporte@, buzon de Banahost).
       COMMERCIAL_AUDIT_ENABLED: ${COMMERCIAL_AUDIT_ENABLED:-false}
+      # LYD-133: rubrica de la corrida automatica (K01-V1 o K01-V2.0). Solo esa
+      # version se envia a Direccion.
+      COMMERCIAL_AUDIT_RUBRIC: ${COMMERCIAL_AUDIT_RUBRIC:-K01-V1}
       COMMERCIAL_AUDIT_TO: ${COMMERCIAL_AUDIT_TO:-carlos@brittanygroup.edu.pe,dir@brittanygroup.edu.pe,christian@brittanygroup.edu.pe,mkt@brittanygroup.edu.pe}
       COMMERCIAL_AUDIT_ALERT_TO: ${COMMERCIAL_AUDIT_ALERT_TO:-desarrollo@brittanygroup.edu.pe}
       COMMERCIAL_AUDIT_FROM: ${COMMERCIAL_AUDIT_FROM:-}
