@@ -46,9 +46,9 @@ interface ReportInput {
 const MISSED_LIMIT = 3;
 const PENDING_LIMIT = 20;
 
-const CELL = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top;';
-const HEAD = `${CELL}background:#1e3a8a;color:#fff;font-weight:600;`;
-const H2 = 'font-size:16px;color:#1e3a8a;margin:24px 0 8px;';
+export const CELL = 'padding:6px 8px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top;';
+export const HEAD = `${CELL}background:#1e3a8a;color:#fff;font-weight:600;`;
+export const H2 = 'font-size:16px;color:#1e3a8a;margin:24px 0 8px;';
 
 export function buildAuditReportHtml(input: ReportInput): string {
   const applicable = input.audits.filter((a) => a.applicable && a.total !== null);
@@ -235,24 +235,24 @@ function criteriaCells(list: ReportAudit[]): string {
   }).join('');
 }
 
-function trendBadge(delta: number): string {
+export function trendBadge(delta: number): string {
   const rounded = Math.round(delta);
   if (rounded > 0) return `<span style="color:#166534;font-weight:600;">▲ +${rounded}</span>`;
   if (rounded < 0) return `<span style="color:#991b1b;font-weight:600;">▼ ${rounded}</span>`;
   return '<span style="color:#6b7280;">= 0</span>';
 }
 
-function chatLink(frontUrl: string, chatId: string): string {
+export function chatLink(frontUrl: string, chatId: string): string {
   return `<a href="${escapeHtml(`${frontUrl}/comunicaciones/inbox-chat?chat=${encodeURIComponent(chatId)}`)}" style="color:#1d4ed8;">Abrir en Lydia</a>`;
 }
 
-function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
+export function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>();
   for (const item of items) map.set(key(item), [...(map.get(key(item)) ?? []), item]);
   return map;
 }
 
-function weightedAvg<T extends { weight: number }>(items: T[], value: (item: T) => number): number {
+export function weightedAvg<T extends { weight: number }>(items: T[], value: (item: T) => number): number {
   const weights = items.reduce((sum, item) => sum + item.weight, 0);
   return weights ? items.reduce((sum, item) => sum + item.weight * value(item), 0) / weights : 0;
 }
@@ -263,13 +263,13 @@ function conversationCount(list: ReportAudit[]): string {
   return half ? `${list.length} <span style="color:#6b7280;">(${half} a mitad)</span>` : String(list.length);
 }
 
-function formatLima(unix: number): string {
+export function formatLima(unix: number): string {
   const d = new Date((unix - 5 * 3600) * 1000);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-function longDate(date: string): string {
+export function longDate(date: string): string {
   const days = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
   const d = new Date(`${date}T12:00:00Z`);
   return `${days[d.getUTCDay()]} ${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}`;

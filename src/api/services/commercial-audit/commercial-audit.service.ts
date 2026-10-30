@@ -4,6 +4,7 @@ import { BadRequestException, NotFoundException } from '@exceptions';
 import { LeadType, MessageAuthorKind, Prisma } from '@prisma/client';
 import cron from 'node-cron';
 
+import { buildCoachingPrompt, CoachingCase, fallbackCoaching, parseCoaching } from './audit-coaching';
 import { AuditMailer } from './audit-mailer';
 import {
   buildParticipationPrompt,
@@ -19,7 +20,16 @@ import { AiEvaluationV2, buildPromptV2, findQuote, parseEvaluationsV2 } from './
 import { buildAuditReportHtml, escapeHtml, ReportAudit } from './audit-report';
 import { buildAuditReportHtmlV2, ReportAuditV2 } from './audit-report-v2';
 import { AuditLevel, CRITERIA, LEVELS, points } from './audit-rubric';
-import { AI_SUBCRITERIA, confidenceFor, LevelV2, scoreV2, stateFor, SUBCRITERIA, subPoints } from './audit-rubric-v2';
+import {
+  AI_SUBCRITERIA,
+  confidenceFor,
+  DIMENSIONS,
+  LevelV2,
+  scoreV2,
+  stateFor,
+  SUBCRITERIA,
+  subPoints,
+} from './audit-rubric-v2';
 import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } from './audit-text';
 import { BUSINESS_HOURS, ResponseLag, responseLags, speedLevel } from './audit-timing';
 import { parseRubricVersion, RUBRIC_V1, RUBRIC_V2, RubricVersion, scheduledRubric } from './audit-version';
@@ -934,20 +944,71 @@ export class CommercialAuditService {
     const percentOf = (a: { runId: string; chatId: string; agentId: string | null }) =>
       percents.get(participationKey(a.runId, a.chatId, a.agentId)) ?? null;
 
+    const reportAudits = audits.map((a) => {
+      const percent = percentOf(a);
+      return { ...a, percent, weight: participationWeight(percent) };
+    }) as unknown as ReportAuditV2[];
+
     return buildAuditReportHtmlV2({
       reportDate,
       windowStart,
       windowEnd,
       ...counts,
       frontUrl: (process.env.LYDIA_FRONT_URL || 'https://crm.brittanygroup.edu.pe').replace(/\/$/, ''),
-      audits: audits.map((a) => {
-        const percent = percentOf(a);
-        return { ...a, percent, weight: participationWeight(percent) };
-      }) as unknown as ReportAuditV2[],
+      audits: reportAudits,
       previous: previous
         .map((p) => ({ agentId: p.agentId, total: p.total, weight: participationWeight(percentOf(p)) }))
         .filter((p) => p.weight > 0),
+      coaching: await this.coaching(reportAudits),
     });
+  }
+
+  // LYD-134: tres recomendaciones por asesora, sintetizadas por la IA en una
+  // sola llamada (etiquetas A, B... en vez de nombres). Si la IA no responde,
+  // se usan los consejos de su conversacion mas baja.
+  private async coaching(audits: ReportAuditV2[]): Promise<Record<string, { items: string[]; fallback: boolean }>> {
+    const byAgent = new Map<string, ReportAuditV2[]>();
+    for (const a of audits) {
+      if (!a.agentId || !a.applicable || a.total === null) continue;
+      byAgent.set(a.agentId, [...(byAgent.get(a.agentId) ?? []), a]);
+    }
+    const agents = [...byAgent.keys()];
+    const out: Record<string, { items: string[]; fallback: boolean }> = {};
+    if (!agents.length) return out;
+
+    const cases: CoachingCase[] = agents.map((agentId, i) => {
+      const list = byAgent.get(agentId)!;
+      return {
+        label: participantLabel(i),
+        conversations: list.length,
+        dimensions: DIMENSIONS.map((d) => {
+          const points = list.reduce((s, a) => s + (a.result.dimensiones?.[d.key]?.points ?? 0), 0);
+          const evaluable = list.reduce((s, a) => s + (a.result.dimensiones?.[d.key]?.evaluable ?? 0), 0);
+          return `${d.label} ${evaluable ? `${Math.round((100 * points) / evaluable)} %` : 'n/e'}`;
+        }),
+        observations: list.flatMap((a) => (a.result.diagnostico ?? []).map((d) => d.observacion)),
+        tips: list.flatMap((a) => a.result.consejos ?? []),
+      };
+    });
+
+    let synthesized = new Map<string, string[]>();
+    try {
+      synthesized = parseCoaching(await this.askBridge(buildCoachingPrompt(cases)));
+    } catch (error) {
+      this.logger.error(`No se pudo generar el coaching por asesora: ${error}`);
+    }
+    agents.forEach((agentId, i) => {
+      const items = synthesized.get(participantLabel(i));
+      out[agentId] = items?.length
+        ? { items, fallback: false }
+        : {
+            items: fallbackCoaching(
+              byAgent.get(agentId)!.map((a) => ({ total: a.total as number, tips: a.result.consejos ?? [] })),
+            ),
+            fallback: true,
+          };
+    });
+    return out;
   }
 }
 
