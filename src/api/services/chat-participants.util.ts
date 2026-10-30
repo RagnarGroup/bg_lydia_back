@@ -31,6 +31,9 @@ export function latestParticipation(rows: ParticipationRow[]): Map<string, ChatP
   for (const row of rows) {
     if (row.Run.reportDate !== latestDate.get(row.chatId)) continue;
     const list = byChat.get(row.chatId) ?? [];
+    // LYD-133: el mismo dia puede tener una corrida por version de rubrica
+    // con la misma participacion; cada asesora va una sola vez.
+    if (list.some((p) => p.agent.id === row.Agent.id)) continue;
     list.push({ agent: row.Agent, percent: row.percent, reason: row.reason, reportDate: row.Run.reportDate });
     byChat.set(row.chatId, list);
   }

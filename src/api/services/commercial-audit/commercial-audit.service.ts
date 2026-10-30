@@ -15,9 +15,14 @@ import {
   ParticipationLine,
   participationWeight,
 } from './audit-participation';
+import { AiEvaluationV2, buildPromptV2, findQuote, parseEvaluationsV2 } from './audit-prompt-v2';
 import { buildAuditReportHtml, escapeHtml, ReportAudit } from './audit-report';
+import { buildAuditReportHtmlV2, ReportAuditV2 } from './audit-report-v2';
 import { AuditLevel, CRITERIA, LEVELS, points } from './audit-rubric';
+import { AI_SUBCRITERIA, confidenceFor, LevelV2, scoreV2, stateFor, SUBCRITERIA, subPoints } from './audit-rubric-v2';
 import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } from './audit-text';
+import { BUSINESS_HOURS, ResponseLag, responseLags, speedLevel } from './audit-timing';
+import { parseRubricVersion, RUBRIC_V1, RUBRIC_V2, RubricVersion, scheduledRubric } from './audit-version';
 
 // LYD-102: auditoria comercial diaria META K-01. Solo lectura sobre las
 // conversaciones: nunca envia nada a clientes.
@@ -30,6 +35,9 @@ import { anonymize, auditMessageText, clientAlias, isVoiceNote, nameTokens } fro
 // - LYD-117: en la misma corrida de las 21:00, porcentaje de participacion de
 //   cada asesora en las conversaciones del dia (ConversationParticipation).
 //   LYD-123: se calcula antes de evaluar y pondera los promedios del reporte.
+// - LYD-133: cada corrida es de una version de rubrica (K01-V1 o K01-V2.0).
+//   La automatica usa COMMERCIAL_AUDIT_RUBRIC; las otras versiones se corren
+//   a mano y solo se envian a destinatarios de prueba.
 
 const TIMEZONE = 'America/Lima';
 // Peru no tiene horario de verano: UTC-5 fijo.
@@ -64,9 +72,13 @@ interface Candidate {
   leadStage: string | null;
   // LYD-115: null cuando el chat todavia no tiene lead (se evalua igual).
   leadType: LeadType | null;
+  // LYD-133: sede de interes del prospecto (solo leads de la landing).
+  leadSede: string | null;
   // LYD-104: sedes de la asesora evaluada, para que la IA no sugiera otra ciudad
   agentSedes: string[];
   lines: Line[];
+  // LYD-133: demoras de respuesta en horario de atencion (rapidez de la V2).
+  lags: ResponseLag[];
   stats: {
     avgResponseMinutes: number | null;
     unansweredClientMessages: number;
@@ -127,14 +139,18 @@ export class CommercialAuditService {
       this.logger.info('Auditoria comercial diaria desactivada (COMMERCIAL_AUDIT_ENABLED != true)');
       return;
     }
-    cron.schedule(`0 ${CUTOFF_HOUR} * * *`, () => this.runInBackground(todayInLima(), { scheduled: true }), {
+    cron.schedule(`0 ${CUTOFF_HOUR} * * *`, () => this.runInBackground(todayInLima(), scheduledRubric(), true), {
       timezone: TIMEZONE,
     });
-    cron.schedule(`0 ${DELIVERY_HOUR} * * *`, () => void this.deliverScheduled(todayInLima()), { timezone: TIMEZONE });
-    cron.schedule(`30 ${DELIVERY_HOUR + 1} * * *`, () => void this.alertIfNotSent(todayInLima()), {
+    cron.schedule(`0 ${DELIVERY_HOUR} * * *`, () => void this.deliverScheduled(todayInLima(), scheduledRubric()), {
       timezone: TIMEZONE,
     });
-    this.logger.info('Auditoria comercial diaria programada: corte 21:00, envio 22:00 (America/Lima)');
+    cron.schedule(`30 ${DELIVERY_HOUR + 1} * * *`, () => void this.alertIfNotSent(todayInLima(), scheduledRubric()), {
+      timezone: TIMEZONE,
+    });
+    this.logger.info(
+      `Auditoria comercial diaria programada: corte 21:00, envio 22:00 (America/Lima), rubrica ${scheduledRubric()}`,
+    );
     void this.resumeIfInterrupted().catch((error) => this.logger.error(`No se pudo reanudar la auditoria: ${error}`));
   }
 
@@ -145,38 +161,38 @@ export class CommercialAuditService {
     const hour = nowInLimaHour();
     if (hour < CUTOFF_HOUR) return;
     const reportDate = todayInLima();
-    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate }, select: { status: true } });
+    const version = scheduledRubric();
+    const run = await this.findRun(reportDate, version, { status: true });
     if (run?.status === 'sent') return;
     if (run?.status === 'evaluated') {
-      if (hour >= DELIVERY_HOUR) await this.deliverScheduled(reportDate);
+      if (hour >= DELIVERY_HOUR) await this.deliverScheduled(reportDate, version);
       return;
     }
-    this.logger.info(`Reanudando la auditoria ${reportDate} (estado: ${run?.status ?? 'sin corrida'})`);
-    this.runInBackground(reportDate, { scheduled: true });
+    this.logger.info(`Reanudando la auditoria ${reportDate} ${version} (estado: ${run?.status ?? 'sin corrida'})`);
+    this.runInBackground(reportDate, version, true);
   }
 
   // Corrida manual (piloto, reproceso). No envia: el envio es aparte.
-  public startRun(date?: string) {
+  public startRun(date?: string, version?: unknown) {
     const reportDate = date ?? todayInLima();
     if (!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)) {
       throw new BadRequestException('date debe tener formato YYYY-MM-DD');
     }
-    if (this.inFlight.has(reportDate)) {
-      throw new BadRequestException(`Ya hay una corrida en curso para ${reportDate}`);
+    const rubric = this.versionParam(version);
+    if (this.inFlight.has(runKey(reportDate, rubric))) {
+      throw new BadRequestException(`Ya hay una corrida ${rubric} en curso para ${reportDate}`);
     }
-    this.runInBackground(reportDate, { scheduled: false });
-    return { reportDate, status: 'running' };
+    this.runInBackground(reportDate, rubric, false);
+    return { reportDate, rubricVersion: rubric, status: 'running' };
   }
 
   // LYD-117: recalcula solo la participacion de un dia ya auditado (dias
   // anteriores a esta funcion o reproceso). No toca la auditoria ni envia nada.
-  public async startParticipation(reportDate: string) {
-    const run = await this.prisma.commercialAuditRun.findUnique({
-      where: { reportDate },
-      select: { id: true, windowStart: true, windowEnd: true },
-    });
-    if (!run) throw new NotFoundException(`No hay corrida para ${reportDate}`);
-    const key = `participacion:${reportDate}`;
+  public async startParticipation(reportDate: string, version?: unknown) {
+    const rubric = this.versionParam(version);
+    const run = await this.findRun(reportDate, rubric, { id: true, windowStart: true, windowEnd: true });
+    if (!run) throw new NotFoundException(`No hay corrida ${rubric} para ${reportDate}`);
+    const key = `participacion:${runKey(reportDate, rubric)}`;
     if (this.inFlight.has(key)) {
       throw new BadRequestException(`Ya se esta calculando la participacion de ${reportDate}`);
     }
@@ -185,14 +201,16 @@ export class CommercialAuditService {
       .then((chats) => this.logger.info(`Participacion ${reportDate}: ${chats} conversaciones`))
       .catch((error) => this.logger.error(`Participacion ${reportDate} fallo: ${error}`))
       .finally(() => this.inFlight.delete(key));
-    return { reportDate, status: 'running' };
+    return { reportDate, rubricVersion: rubric, status: 'running' };
   }
 
-  public async getRun(reportDate: string) {
+  public async getRun(reportDate: string, version?: unknown) {
+    const rubric = this.versionParam(version);
     const run = await this.prisma.commercialAuditRun.findUnique({
-      where: { reportDate },
+      where: { reportDate_rubricVersion: { reportDate, rubricVersion: rubric } },
       select: {
         reportDate: true,
+        rubricVersion: true,
         status: true,
         windowStart: true,
         windowEnd: true,
@@ -204,45 +222,71 @@ export class CommercialAuditService {
         _count: { select: { Audits: true } },
       },
     });
-    if (!run) throw new NotFoundException(`No hay corrida para ${reportDate}`);
-    return { ...run, inFlight: this.inFlight.has(reportDate) };
+    if (!run) throw new NotFoundException(`No hay corrida ${rubric} para ${reportDate}`);
+    return { ...run, inFlight: this.inFlight.has(runKey(reportDate, rubric)) };
   }
 
-  public async getRunHtml(reportDate: string): Promise<string> {
-    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate }, select: { html: true } });
-    if (!run?.html) throw new NotFoundException(`El reporte de ${reportDate} todavia no esta listo`);
+  public async getRunHtml(reportDate: string, version?: unknown): Promise<string> {
+    const rubric = this.versionParam(version);
+    const run = await this.findRun(reportDate, rubric, { html: true });
+    if (!run?.html) throw new NotFoundException(`El reporte ${rubric} de ${reportDate} todavia no esta listo`);
     return run.html;
   }
 
   // Envio manual. `to` permite mandar el piloto solo a desarrollo antes de
   // abrirlo a Direccion; en ese caso no marca la corrida como enviada.
-  public async sendRun(reportDate: string, to?: unknown) {
+  // LYD-133: a Direccion solo va la version programada (sin duplicados V1/V2).
+  public async sendRun(reportDate: string, to?: unknown, version?: unknown) {
+    const rubric = this.versionParam(version);
     const override = Array.isArray(to) ? to.filter((t): t is string => typeof t === 'string' && t.includes('@')) : [];
-    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate } });
-    if (!run?.html) throw new NotFoundException(`El reporte de ${reportDate} todavia no esta listo`);
-    await this.mailer.send(override.length ? override : this.mailer.recipients(), subjectFor(reportDate), run.html);
+    if (!override.length && rubric !== scheduledRubric()) {
+      throw new BadRequestException(
+        `La rubrica programada es ${scheduledRubric()}: la ${rubric} solo se envia con "to" (destinatarios de prueba)`,
+      );
+    }
+    const run = await this.findRun(reportDate, rubric, { id: true, html: true });
+    if (!run?.html) throw new NotFoundException(`El reporte ${rubric} de ${reportDate} todavia no esta listo`);
+    const recipients = override.length ? override : this.mailer.recipients();
+    await this.mailer.send(recipients, subjectFor(reportDate, rubric), run.html);
     if (!override.length) {
       await this.prisma.commercialAuditRun.update({
-        where: { reportDate },
+        where: { id: run.id },
         data: { status: 'sent', sentAt: new Date() },
       });
     }
-    return { reportDate, sentTo: override.length ? override : this.mailer.recipients() };
+    return { reportDate, rubricVersion: rubric, sentTo: recipients };
   }
 
-  private runInBackground(reportDate: string, opts: { scheduled: boolean }): void {
-    this.run(reportDate, opts).catch((error) => this.logger.error(`Auditoria ${reportDate} fallo: ${error}`));
+  private versionParam(version: unknown): RubricVersion {
+    if (version === undefined || version === null || version === '') return scheduledRubric();
+    const parsed = parseRubricVersion(version);
+    if (!parsed) throw new BadRequestException(`version debe ser ${RUBRIC_V1} o ${RUBRIC_V2}`);
+    return parsed;
   }
 
-  private async run(reportDate: string, opts: { scheduled: boolean }): Promise<void> {
-    if (this.inFlight.has(reportDate)) return;
-    this.inFlight.add(reportDate);
+  private findRun<S extends Prisma.CommercialAuditRunSelect>(reportDate: string, version: RubricVersion, select: S) {
+    return this.prisma.commercialAuditRun.findUnique({
+      where: { reportDate_rubricVersion: { reportDate, rubricVersion: version } },
+      select,
+    });
+  }
+
+  private runInBackground(reportDate: string, version: RubricVersion, scheduled: boolean): void {
+    this.run(reportDate, version, scheduled).catch((error) =>
+      this.logger.error(`Auditoria ${reportDate} ${version} fallo: ${error}`),
+    );
+  }
+
+  private async run(reportDate: string, version: RubricVersion, scheduled: boolean): Promise<void> {
+    const key = runKey(reportDate, version);
+    if (this.inFlight.has(key)) return;
+    this.inFlight.add(key);
 
     const windowEnd = limaTimestamp(reportDate, CUTOFF_HOUR);
     const windowStart = windowEnd - 24 * 3600;
     const run = await this.prisma.commercialAuditRun.upsert({
-      where: { reportDate },
-      create: { reportDate, windowStart, windowEnd },
+      where: { reportDate_rubricVersion: { reportDate, rubricVersion: version } },
+      create: { reportDate, rubricVersion: version, windowStart, windowEnd },
       update: { status: 'running', windowStart, windowEnd, error: null, html: null },
     });
 
@@ -251,7 +295,7 @@ export class CommercialAuditService {
 
       // LYD-123: la participacion va primero para no evaluar a quien aporto
       // 20% o menos. Si falla, se evalua a todas (peso completo).
-      await this.computeParticipation(run.id, windowStart, windowEnd).catch((error) =>
+      await this.prepareParticipation(run.id, reportDate, windowStart, windowEnd).catch((error) =>
         this.logger.error(`Participacion ${reportDate} fallo: ${error}`),
       );
       const percents = await this.participationPercents([run.id]);
@@ -262,7 +306,7 @@ export class CommercialAuditService {
       );
       const lowParticipation = collected.candidates.length - candidates.length;
       this.logger.info(
-        `Auditoria ${reportDate}: ${candidates.length} conversaciones a evaluar (${lowParticipation} con participacion <= ${MIN_PARTICIPATION}%)`,
+        `Auditoria ${reportDate} ${version}: ${candidates.length} conversaciones a evaluar (${lowParticipation} con participacion <= ${MIN_PARTICIPATION}%)`,
       );
 
       let evaluated = 0;
@@ -274,16 +318,28 @@ export class CommercialAuditService {
           commercial.push(candidate);
           continue;
         }
-        await this.saveAudit(run.id, candidate, {
-          id: candidate.ref,
-          aplica: false,
-          motivo_no_aplica: `Lead marcado como ${NON_COMMERCIAL_LABEL[candidate.leadType]}`,
-        });
+        const motivo = `Lead marcado como ${NON_COMMERCIAL_LABEL[candidate.leadType]}`;
+        if (version === RUBRIC_V2) await this.saveAuditV2(run.id, candidate, notApplicableV2(candidate.ref, motivo));
+        else await this.saveAudit(run.id, candidate, { id: candidate.ref, aplica: false, motivo_no_aplica: motivo });
         evaluated++;
       }
       for (let i = 0; i < commercial.length; i += BATCH_SIZE) {
         const batch = commercial.slice(i, i + BATCH_SIZE);
-        const results = await this.evaluateBatch(batch);
+        if (version === RUBRIC_V2) {
+          const results = await this.evaluateBatchWith(
+            batch,
+            (b) => buildPromptV2(b.map(conversationBlockV2)),
+            parseEvaluationsV2,
+          );
+          for (const candidate of batch) {
+            const result = results.get(candidate.ref);
+            if (!result) continue;
+            await this.saveAuditV2(run.id, candidate, result);
+            evaluated++;
+          }
+          continue;
+        }
+        const results = await this.evaluateBatchWith(batch, buildPrompt, parseEvaluations);
         for (const candidate of batch) {
           const result = results.get(candidate.ref);
           if (!result) continue;
@@ -292,18 +348,18 @@ export class CommercialAuditService {
         }
       }
 
-      const html = await this.buildReport(run.id, reportDate, windowStart, windowEnd, {
-        unattributed,
-        lowParticipation,
-        failed: candidates.length - evaluated,
-      });
+      const counts = { unattributed, lowParticipation, failed: candidates.length - evaluated };
+      const html =
+        version === RUBRIC_V2
+          ? await this.buildReportV2(run.id, reportDate, windowStart, windowEnd, counts)
+          : await this.buildReport(run.id, reportDate, windowStart, windowEnd, counts);
       await this.prisma.commercialAuditRun.update({
         where: { id: run.id },
         data: { status: 'evaluated', conversations: evaluated, unattributed, html },
       });
 
-      if (opts.scheduled && nowInLimaHour() >= DELIVERY_HOUR) {
-        await this.deliverScheduled(reportDate);
+      if (scheduled && nowInLimaHour() >= DELIVERY_HOUR) {
+        await this.deliverScheduled(reportDate, version);
       }
     } catch (error) {
       await this.prisma.commercialAuditRun.update({
@@ -312,28 +368,28 @@ export class CommercialAuditService {
       });
       throw error;
     } finally {
-      this.inFlight.delete(reportDate);
+      this.inFlight.delete(key);
     }
   }
 
-  private async deliverScheduled(reportDate: string): Promise<void> {
-    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate } });
+  private async deliverScheduled(reportDate: string, version: RubricVersion): Promise<void> {
+    const run = await this.findRun(reportDate, version, { status: true, error: true });
     if (run?.status === 'sent') return;
-    if (run?.status === 'running' && this.inFlight.has(reportDate)) return; // sale al terminar
+    if (run?.status === 'running' && this.inFlight.has(runKey(reportDate, version))) return; // sale al terminar
     if (run?.status !== 'evaluated') {
       await this.alert(reportDate, run?.error ?? 'La evaluacion no corrio o se interrumpio.');
       return;
     }
     try {
-      await this.sendRun(reportDate);
+      await this.sendRun(reportDate, undefined, version);
     } catch (error) {
       this.logger.error(`No se pudo enviar el reporte ${reportDate}: ${error}`);
       await this.alert(reportDate, `El envio del correo fallo: ${error}`);
     }
   }
 
-  private async alertIfNotSent(reportDate: string): Promise<void> {
-    const run = await this.prisma.commercialAuditRun.findUnique({ where: { reportDate } });
+  private async alertIfNotSent(reportDate: string, version: RubricVersion): Promise<void> {
+    const run = await this.findRun(reportDate, version, { status: true });
     if (run?.status === 'sent') return;
     await this.alert(
       reportDate,
@@ -397,7 +453,7 @@ export class CommercialAuditService {
           name: true,
           contactNameOverride: true,
           assignedAgentId: true,
-          Lead: { select: { stage: true, leadType: true, contactName: true } },
+          Lead: { select: { stage: true, leadType: true, contactName: true, sede: true } },
         },
       });
       if (!chat) continue;
@@ -444,8 +500,10 @@ export class CommercialAuditService {
           alias: clientAlias(chat.id),
           leadStage: chat.Lead?.stage ?? null,
           leadType: chat.Lead?.leadType ?? null,
+          leadSede: chat.Lead?.sede ?? null,
           agentSedes: agentSedes.get(target.agentId) ?? [],
           lines,
+          lags: responseLags(lines, windowEnd),
           stats: executionStats(lines),
         });
       }
@@ -491,17 +549,21 @@ export class CommercialAuditService {
 
   // ---------- Evaluacion ----------
 
-  private async evaluateBatch(batch: Candidate[]): Promise<Map<string, AiEvaluation>> {
-    const results = new Map<string, AiEvaluation>();
+  private async evaluateBatchWith<T extends { id: string }>(
+    batch: Candidate[],
+    build: (batch: Candidate[]) => string,
+    parse: (text: string) => T[],
+  ): Promise<Map<string, T>> {
+    const results = new Map<string, T>();
     try {
-      for (const r of parseEvaluations(await this.askBridge(buildPrompt(batch)))) results.set(r.id, r);
+      for (const r of parse(await this.askBridge(build(batch)))) results.set(r.id, r);
     } catch (error) {
       this.logger.error(`Lote de auditoria fallo (${batch.map((c) => c.ref).join(', ')}): ${error}`);
     }
     // Lo que el lote no devolvio bien se reintenta de a una conversacion.
     for (const candidate of batch.filter((c) => !results.has(c.ref))) {
       try {
-        const [single] = parseEvaluations(await this.askBridge(buildPrompt([candidate])));
+        const [single] = parse(await this.askBridge(build([candidate])));
         if (single) results.set(candidate.ref, { ...single, id: candidate.ref });
       } catch (error) {
         this.logger.error(`No se pudo evaluar ${candidate.ref} (chat ${candidate.chatId}): ${error}`);
@@ -578,7 +640,117 @@ export class CommercialAuditService {
     });
   }
 
+  // LYD-133: evaluacion K01-V2.0. De la IA se toman los niveles y el coaching;
+  // los puntos, la nota, la cobertura, la rapidez, el estado y la confianza los
+  // calcula el codigo. Una cita que no esta en la conversacion se descarta
+  // (regla 2: solo evidencia verificable) y la hora sale del mensaje real.
+  private async saveAuditV2(runId: string, candidate: Candidate, ai: AiEvaluationV2): Promise<void> {
+    const applicable = ai.aplica !== false;
+    const speed = speedLevel(candidate.lags);
+    const evidence = (cita: string | null) => {
+      const idx = findQuote(candidate.lines, cita);
+      return idx < 0
+        ? { cita: null, hora: null, citaDescartada: Boolean(cita) }
+        : { cita, hora: formatLima(candidate.lines[idx].at), citaDescartada: false };
+    };
+
+    let score: ReturnType<typeof scoreV2> | null = null;
+    const criterios: Record<string, unknown> = {};
+    let diagnostico: unknown[] = [];
+    if (applicable) {
+      const levels: Record<string, LevelV2> = { ej_rapidez: speed.level };
+      for (const sub of AI_SUBCRITERIA) levels[sub.key] = ai.criterios[sub.key]?.nivel ?? 'no_evaluable';
+      score = scoreV2(levels);
+      for (const sub of SUBCRITERIA) {
+        const nivel = levels[sub.key];
+        const puntos = nivel === 'no_evaluable' ? null : subPoints(sub.weight, nivel);
+        criterios[sub.key] = sub.computed
+          ? {
+              nivel,
+              peso: sub.weight,
+              puntos,
+              cita: null,
+              hora: null,
+              motivo: speedReason(speed.avgMinutes, candidate.lags),
+            }
+          : {
+              nivel,
+              peso: sub.weight,
+              puntos,
+              ...evidence(ai.criterios[sub.key]?.cita ?? null),
+              motivo: ai.criterios[sub.key]?.motivo ?? null,
+            };
+      }
+      diagnostico = ai.diagnostico.map((d) => ({ observacion: d.observacion, ...evidence(d.cita) }));
+    }
+    const total = score?.total ?? null;
+    const confidence = !applicable
+      ? null
+      : total === null
+        ? 'baja'
+        : confidenceFor(score!.coverage, {
+            assigned: candidate.attribution === 'asignada',
+            voiceNotes: candidate.stats.voiceNotes,
+          });
+
+    await this.prisma.conversationAudit.create({
+      data: {
+        runId,
+        chatId: candidate.chatId,
+        agentId: candidate.agentId,
+        attribution: candidate.attribution,
+        applicable,
+        total,
+        coverage: score?.coverage ?? null,
+        confidence,
+        state: applicable ? stateFor(candidate.leadStage, ai.estado) : null,
+        result: {
+          alias: candidate.alias,
+          leadStage: candidate.leadStage,
+          leadSede: candidate.leadSede,
+          stats: candidate.stats,
+          rapidez: {
+            promedioMinutos: speed.avgMinutes,
+            demoras: candidate.lags.map((l) => ({
+              cliente: formatLima(l.clientAt),
+              respuesta: l.replyAt === null ? null : formatLima(l.replyAt),
+              minutos: l.minutes,
+            })),
+          },
+          criterios,
+          dimensiones: score?.dimensions ?? null,
+          puntos: score?.points ?? null,
+          evaluables: score?.evaluable ?? null,
+          diagnostico,
+          consejos: ai.consejos,
+          respuestaSugerida: ai.respuesta_sugerida,
+          proximaAccion: ai.proxima_accion,
+          motivoNoAplica: applicable ? null : (ai.motivo_no_aplica ?? null),
+        } as Prisma.InputJsonValue,
+      },
+    });
+  }
+
   // ---------- Participacion (LYD-117) ----------
+
+  // LYD-133: la participacion no depende de la rubrica. Si otra corrida del
+  // mismo dia ya la calculo (la V1 al validar la V2), se copia en vez de
+  // volver a preguntarle a la IA, y las dos versiones pesan igual.
+  private async prepareParticipation(runId: string, reportDate: string, windowStart: number, windowEnd: number) {
+    const source = await this.prisma.commercialAuditRun.findFirst({
+      where: { reportDate, id: { not: runId }, Participations: { some: {} } },
+      select: { id: true },
+    });
+    if (!source) return this.computeParticipation(runId, windowStart, windowEnd);
+
+    await this.prisma.conversationParticipation.deleteMany({ where: { runId } });
+    const rows = await this.prisma.conversationParticipation.findMany({
+      where: { runId: source.id },
+      select: { chatId: true, agentId: true, percent: true, reason: true },
+    });
+    await this.prisma.conversationParticipation.createMany({ data: rows.map((r) => ({ ...r, runId })) });
+    return rows.length;
+  }
 
   // Conversaciones donde escribio una asesora en la ventana. Con una sola
   // asesora en el historial es 100% sin consultar a la IA; con varias, la IA
@@ -711,14 +883,7 @@ export class CommercialAuditService {
       include: { Agent: { select: { id: true, name: true, sedes: true } } },
     });
 
-    const trendFrom = shiftDate(reportDate, -TREND_DAYS);
-    const previous = await this.prisma.conversationAudit.findMany({
-      where: {
-        applicable: true,
-        Run: { reportDate: { gte: trendFrom, lt: reportDate } },
-      },
-      select: { runId: true, chatId: true, agentId: true, total: true },
-    });
+    const previous = await this.previousAudits(reportDate, RUBRIC_V1);
 
     const percents = await this.participationPercents([runId, ...new Set(previous.map((p) => p.runId))]);
     const percentOf = (a: { runId: string; chatId: string; agentId: string | null }) =>
@@ -734,6 +899,51 @@ export class CommercialAuditService {
         const percent = percentOf(a);
         return { ...a, percent, weight: participationWeight(percent) };
       }) as unknown as ReportAudit[],
+      previous: previous
+        .map((p) => ({ agentId: p.agentId, total: p.total, weight: participationWeight(percentOf(p)) }))
+        .filter((p) => p.weight > 0),
+    });
+  }
+
+  // Tendencia de 7 dias: solo corridas de la misma rubrica (las notas V1 y V2
+  // no son comparables).
+  private previousAudits(reportDate: string, version: RubricVersion) {
+    return this.prisma.conversationAudit.findMany({
+      where: {
+        applicable: true,
+        total: { not: null },
+        Run: { reportDate: { gte: shiftDate(reportDate, -TREND_DAYS), lt: reportDate }, rubricVersion: version },
+      },
+      select: { runId: true, chatId: true, agentId: true, total: true },
+    });
+  }
+
+  private async buildReportV2(
+    runId: string,
+    reportDate: string,
+    windowStart: number,
+    windowEnd: number,
+    counts: { unattributed: number; lowParticipation: number; failed: number },
+  ): Promise<string> {
+    const audits = await this.prisma.conversationAudit.findMany({
+      where: { runId },
+      include: { Agent: { select: { id: true, name: true, sedes: true } } },
+    });
+    const previous = await this.previousAudits(reportDate, RUBRIC_V2);
+    const percents = await this.participationPercents([runId, ...new Set(previous.map((p) => p.runId))]);
+    const percentOf = (a: { runId: string; chatId: string; agentId: string | null }) =>
+      percents.get(participationKey(a.runId, a.chatId, a.agentId)) ?? null;
+
+    return buildAuditReportHtmlV2({
+      reportDate,
+      windowStart,
+      windowEnd,
+      ...counts,
+      frontUrl: (process.env.LYDIA_FRONT_URL || 'https://crm.brittanygroup.edu.pe').replace(/\/$/, ''),
+      audits: audits.map((a) => {
+        const percent = percentOf(a);
+        return { ...a, percent, weight: participationWeight(percent) };
+      }) as unknown as ReportAuditV2[],
       previous: previous
         .map((p) => ({ agentId: p.agentId, total: p.total, weight: participationWeight(percentOf(p)) }))
         .filter((p) => p.weight > 0),
@@ -755,6 +965,50 @@ function speakerFor(
 
 function participationKey(runId: string, chatId: string, agentId: string | null): string {
   return `${runId}|${chatId}|${agentId}`;
+}
+
+function runKey(reportDate: string, version: RubricVersion): string {
+  return `${version}:${reportDate}`;
+}
+
+function notApplicableV2(ref: string, motivo: string): AiEvaluationV2 {
+  return {
+    id: ref,
+    aplica: false,
+    motivo_no_aplica: motivo,
+    criterios: {},
+    diagnostico: [],
+    consejos: [],
+    respuesta_sugerida: null,
+    proxima_accion: null,
+    estado: null,
+  };
+}
+
+// LYD-133: bloque de una conversacion para el prompt V2. Sin datos de
+// ejecucion: la rapidez la calcula el codigo y la IA no la califica.
+function conversationBlockV2(c: Candidate): string {
+  const context = [
+    `sede de la asesora: ${describeSedes(c.agentSedes) ?? 'sin dato'}`,
+    c.leadSede ? `sede de interes del prospecto: ${describeSedes([c.leadSede])}` : '',
+    c.leadStage ? `etapa del lead: ${c.leadStage}` : '',
+  ]
+    .filter(Boolean)
+    .join('; ');
+  const transcript = c.lines
+    .map((l) => `[${l.inWindow ? 'HOY ' : ''}${formatLima(l.at)}] ${SPEAKER_LABEL[l.speaker]}: ${l.text}`)
+    .join('\n');
+  return `### Conversacion ${c.ref} (${context})\n${transcript}`;
+}
+
+function speedReason(avgMinutes: number | null, lags: ResponseLag[]): string {
+  if (avgMinutes === null) return 'Sin mensajes del cliente por responder en la ventana.';
+  const waiting = lags.filter((l) => l.replyAt === null).length;
+  const hours = `${BUSINESS_HOURS.open}:00 a ${BUSINESS_HOURS.close}:00, lunes a sábado`;
+  return (
+    `Promedio de ${avgMinutes} min en horario de atención (${hours}), ${lags.length} turno(s) del cliente` +
+    (waiting ? `; ${waiting} sin respuesta al corte.` : '.')
+  );
 }
 
 function executionStats(lines: Line[]): Candidate['stats'] {
@@ -873,8 +1127,10 @@ function formatLima(unix: number): string {
   return `${pad(d.getUTCDate())}/${pad(d.getUTCMonth() + 1)} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-function subjectFor(reportDate: string): string {
-  return `Auditoria comercial K-01 - ${reportDate}`;
+function subjectFor(reportDate: string, version: RubricVersion): string {
+  return version === RUBRIC_V2
+    ? `Evaluación y coaching comercial ${RUBRIC_V2} - ${reportDate}`
+    : `Auditoria comercial K-01 - ${reportDate}`;
 }
 
 function sleep(ms: number): Promise<void> {

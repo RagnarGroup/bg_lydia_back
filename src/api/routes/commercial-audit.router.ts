@@ -5,7 +5,8 @@ import { Router } from 'express';
 
 // LYD-102: corridas de la auditoria comercial diaria. La programacion diaria
 // (21:00 evalua, 22:00 envia) no pasa por aca; estas rutas son para el piloto
-// y para reprocesar o reenviar un dia puntual.
+// y para reprocesar o reenviar un dia puntual. LYD-133: `version` (body o
+// query) elige la rubrica; sin ella, la de la corrida automatica.
 export class CommercialAuditRouter {
   public readonly router: Router = Router();
 
@@ -13,21 +14,31 @@ export class CommercialAuditRouter {
     this.router
       // Evalua en segundo plano el dia indicado (por defecto hoy, hora de Lima). No envia.
       .post('/runs', async (req, res) => {
-        return res.status(202).json(commercialAuditController.startRun(req.body?.date));
+        return res.status(202).json(commercialAuditController.startRun(req.body?.date, req.body?.version));
       })
       .get('/runs/:date', async (req, res) => {
-        return res.json(await commercialAuditController.getRun(req.params.date));
+        return res.json(await commercialAuditController.getRun(req.params.date, req.query.version));
       })
       .get('/runs/:date/html', async (req, res) => {
-        return res.type('html').send(await commercialAuditController.getRunHtml(req.params.date));
+        return res.type('html').send(await commercialAuditController.getRunHtml(req.params.date, req.query.version));
       })
       // LYD-117: recalcula solo el porcentaje de participacion de un dia ya auditado.
       .post('/runs/:date/participation', async (req, res) => {
-        return res.status(202).json(await commercialAuditController.startParticipation(req.params.date));
+        return res
+          .status(202)
+          .json(
+            await commercialAuditController.startParticipation(req.params.date, req.body?.version ?? req.query.version),
+          );
       })
       // `to` opcional: manda solo a esas direcciones (piloto) sin marcar la corrida como enviada.
       .post('/runs/:date/send', async (req, res) => {
-        return res.json(await commercialAuditController.sendRun(req.params.date, req.body?.to));
+        return res.json(
+          await commercialAuditController.sendRun(
+            req.params.date,
+            req.body?.to,
+            req.body?.version ?? req.query.version,
+          ),
+        );
       });
   }
 }

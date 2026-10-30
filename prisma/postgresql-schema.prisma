@@ -1155,7 +1155,9 @@ enum CommercialAuditStatus {
 
 model CommercialAuditRun {
   id            String                @id @default(cuid())
-  reportDate    String                @unique @db.VarChar(10)
+  reportDate    String                @db.VarChar(10)
+  // LYD-133: rubrica de la corrida (K01-V1, K01-V2.0). Una corrida por dia y version.
+  rubricVersion String                @default("K01-V1") @db.VarChar(20)
   windowStart   Int                   @db.Integer
   windowEnd     Int                   @db.Integer
   status        CommercialAuditStatus @default(running)
@@ -1168,6 +1170,8 @@ model CommercialAuditRun {
   updatedAt     DateTime              @updatedAt @db.Timestamp
   Audits        ConversationAudit[]
   Participations ConversationParticipation[]
+
+  @@unique([reportDate, rubricVersion])
 }
 
 // Una fila por (conversacion, asesora) evaluada en la corrida. Los puntajes
@@ -1189,6 +1193,12 @@ model ConversationAudit {
   diagnostico  Int?
   valor        Int?
   ejecucion    Int?
+  // LYD-133 (K01-V2.0): % de los 100 puntos que se pudieron evaluar, confianza
+  // (alta/media/baja) y estado (en_seguimiento/en_riesgo/perdida/matriculado).
+  // Los puntos por dimension y sub-criterio van en `result`.
+  coverage     Int?
+  confidence   String?            @db.VarChar(10)
+  state        String?            @db.VarChar(20)
   result       Json               @db.JsonB
   createdAt    DateTime           @default(now()) @db.Timestamp
 
